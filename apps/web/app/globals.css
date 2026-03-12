@@ -39,6 +39,8 @@
 html {
   background: var(--background);
   font-size: 15px;
+  overflow-y: scroll;
+  scrollbar-gutter: stable;
 }
 
 body {
@@ -83,7 +85,18 @@ textarea {
 .app-shell {
   width: var(--shell);
   margin: 0 auto;
-  padding: 0 0 80px;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  padding: 0 0 32px;
+}
+
+.app-footer {
+  margin-top: auto;
+  padding-top: 24px;
+  color: var(--muted-foreground);
+  font-size: 0.8125rem;
+  text-align: center;
 }
 
 .home-grid {
@@ -106,6 +119,8 @@ textarea {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
   padding: 12px 0;
   border-bottom: 1px solid var(--border);
   margin-bottom: 32px;
@@ -118,10 +133,47 @@ textarea {
   letter-spacing: -0.01em;
 }
 
+.site-nav-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+}
+
 .site-nav-links {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.icon-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted-foreground);
+  background: var(--card);
+  box-shadow: var(--shadow-sm);
+  transition: background 140ms ease, border-color 140ms ease, color 140ms ease, box-shadow 140ms ease;
+}
+
+.icon-link:hover {
+  background: var(--muted);
+  border-color: var(--border-strong);
+  color: var(--foreground);
+}
+
+.icon-link:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--ring);
+}
+
+.icon-link svg {
+  width: 16px;
+  height: 16px;
 }
 
 /* ── Page Hero ── */
@@ -611,9 +663,50 @@ textarea {
   padding: 24px;
 }
 
-.guide-stack {
-  display: grid;
-  gap: 12px;
+.guide-toggle-input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.guide-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--muted);
+}
+
+.guide-toggle-button {
+  flex: 1 1 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted-foreground);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  text-align: center;
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease, box-shadow 140ms ease;
+}
+
+.guide-toggle-input:focus-visible + .guide-toggle-input + .guide-toggle .guide-toggle-button:first-child,
+.guide-toggle-input + .guide-toggle-input:focus-visible + .guide-toggle .guide-toggle-button:last-child {
+  box-shadow: 0 0 0 3px var(--ring);
+}
+
+.guide-toggle-input:first-of-type:checked ~ .guide-toggle .guide-toggle-button:first-child,
+.guide-toggle-input:nth-of-type(2):checked ~ .guide-toggle .guide-toggle-button:last-child {
+  background: var(--card);
+  color: var(--foreground);
+  box-shadow: var(--shadow-sm);
 }
 
 .guide-card {
@@ -623,6 +716,16 @@ textarea {
   padding: 16px;
   display: grid;
   gap: 12px;
+}
+
+.guide-card.guide-card-api,
+.guide-card.guide-card-cli {
+  display: none;
+}
+
+.guide-toggle-input:first-of-type:checked ~ .guide-card.guide-card-api,
+.guide-toggle-input:nth-of-type(2):checked ~ .guide-card.guide-card-cli {
+  display: grid;
 }
 
 .guide-card-header {
@@ -652,6 +755,11 @@ textarea {
 
 .code-block-secondary {
   background: #f3f4f6;
+}
+
+.guide-cli-command {
+  padding-top: 14px;
+  padding-bottom: 14px;
 }
 
 /* ── Status Cards ── */
@@ -988,12 +1096,17 @@ textarea {
   }
 
   .app-shell {
-    padding: 0 0 56px;
+    padding: 0 0 24px;
   }
 
   .site-nav {
     padding: 16px 0 24px;
     margin-bottom: 28px;
+  }
+
+  .site-nav-actions {
+    width: 100%;
+    justify-content: space-between;
   }
 
   .photo-row {
@@ -1014,5 +1127,9 @@ textarea {
   .button {
     width: 100%;
     justify-content: center;
+  }
+
+  .app-footer {
+    padding-top: 20px;
   }
 }

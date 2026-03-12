@@ -5,11 +5,19 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { IntegrationGuide } from "../apps/web/components/integration-guide";
 
-test("integration guide renders API and CLI setup instructions", () => {
+test("integration guide renders API setup instructions by default", () => {
   const html = renderToStaticMarkup(createElement(IntegrationGuide));
 
-  assert.match(html, /Run the same flow from the API or CLI/);
+  assert.match(html, /The same upload, ranking, and feedback flow is available for automation and batch work/);
+  assert.match(html, /Switch between API and CLI instructions/);
   assert.match(html, /POST \/api\/v1\/uploads/);
-  assert.match(html, /node packages\/cli\/bin\/listing-photo-ranker\.js rank/);
   assert.match(html, /x-api-key/);
+});
+
+test("integration guide can render CLI instructions", () => {
+  const html = renderToStaticMarkup(createElement(IntegrationGuide, { initialMode: "cli" }));
+
+  assert.match(html, /node packages\/cli\/bin\/listing-photo-ranker\.js rank/);
+  assert.match(html, /node packages\/cli\/bin\/listing-photo-ranker\.js status/);
+  assert.match(html, /--api-base-url/);
 });
