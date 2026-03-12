@@ -64,7 +64,7 @@ export function IntegrationGuide({ initialMode = "api" }: { initialMode?: GuideM
         </ol>
 
         <pre className="code-block"><code>{API_SNIPPET}</code></pre>
-        <p className="small-text">Send <code>x-api-key</code> only when <code>API_KEY</code> is configured.</p>
+        <p className="small-text">External API and CLI clients should send <code>x-api-key</code> when <code>API_KEY</code> is configured.</p>
       </section>
 
       <section className="guide-card guide-card-cli" aria-label="CLI instructions">

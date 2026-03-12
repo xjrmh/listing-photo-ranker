@@ -1,4 +1,7 @@
 import { getApp } from "@listing-photo-ranker/core";
+import { createHmac, timingSafeEqual } from "node:crypto";
+
+import { readCookie, WEB_UI_API_COOKIE_NAME, WEB_UI_API_TOKEN_CONTEXT } from "./api-auth";
 
 function safeBaseUrl(value: string | null | undefined): string | null {
   if (!value) {
@@ -39,6 +42,17 @@ export function jsonError(message: string, status = 400): Response {
   return Response.json({ error: message }, { status });
 }
 
+function hasValidBrowserApiCookie(request: Request, apiKey: string): boolean {
+  const cookie = readCookie(request.headers.get("cookie"), WEB_UI_API_COOKIE_NAME);
+  if (!cookie) {
+    return false;
+  }
+
+  const provided = Buffer.from(cookie);
+  const expected = Buffer.from(createHmac("sha256", apiKey).update(WEB_UI_API_TOKEN_CONTEXT).digest("base64url"));
+  return provided.length === expected.length && timingSafeEqual(provided, expected);
+}
+
 export function checkApiKey(request: Request): Response | null {
   const requiredApiKey = process.env.API_KEY?.trim();
   if (!requiredApiKey) {
@@ -46,11 +60,11 @@ export function checkApiKey(request: Request): Response | null {
   }
 
   const providedApiKey = request.headers.get("x-api-key") ?? "";
-  if (providedApiKey !== requiredApiKey) {
-    return jsonError("Unauthorized.", 401);
+  if (providedApiKey === requiredApiKey || hasValidBrowserApiCookie(request, requiredApiKey)) {
+    return null;
   }
 
-  return null;
+  return jsonError("Unauthorized.", 401);
 }
 
 export function getServerApp() {
