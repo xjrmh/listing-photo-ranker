@@ -3,6 +3,8 @@ import { Pool, type PoolClient } from "pg";
 import type { AssetRecord, FeedbackRecord, ListingContext, RankingJob, RankingStatus } from "./schemas";
 import { nowIso } from "./utils";
 
+const POSTGRES_SCHEMA_LOCK_ID = 91834721;
+
 export interface Repository {
   createAsset(asset: AssetRecord): Promise<AssetRecord>;
   getAsset(assetId: string): Promise<AssetRecord | null>;
@@ -188,52 +190,59 @@ export class PostgresRepository implements Repository {
     const client = await this.pool.connect();
     try {
       if (!this.schemaReady) {
-        await client.query(`
-          create table if not exists assets (
-            id text primary key,
-            file_name text not null,
-            content_type text not null,
-            byte_size integer,
-            storage_key text not null,
-            upload_token text not null,
-            upload_status text not null,
-            created_at timestamptz not null default now(),
-            uploaded_at timestamptz
-          );
-        `);
-        await client.query(`
-          create table if not exists ranking_jobs (
-            id text primary key,
-            method text not null,
-            target_count integer not null,
-            asset_ids jsonb not null,
-            listing_context jsonb not null default '{"listing_intent":"sale","property_type":"other"}'::jsonb,
-            policy jsonb not null,
-            status text not null,
-            provider_name text,
-            model_version text,
-            result jsonb,
-            error text,
-            created_at timestamptz not null default now(),
-            updated_at timestamptz not null default now()
-          );
-        `);
-        await client.query(`
-          alter table ranking_jobs
-          add column if not exists listing_context jsonb not null default '{"listing_intent":"sale","property_type":"other"}'::jsonb
-        `);
-        await client.query(`
-          create table if not exists feedback (
-            id text primary key,
-            ranking_id text not null references ranking_jobs(id) on delete cascade,
-            ordered_asset_ids jsonb not null,
-            corrected_labels jsonb not null,
-            notes text,
-            exported boolean not null default false,
-            created_at timestamptz not null default now()
-          );
-        `);
-        this.schemaReady = true;
+        await client.query("select pg_advisory_lock($1)", [POSTGRES_SCHEMA_LOCK_ID]);
+        try {
+          if (!this.schemaReady) {
+            await client.query(`
+              create table if not exists assets (
+                id text primary key,
+                file_name text not null,
+                content_type text not null,
+                byte_size integer,
+                storage_key text not null,
+                upload_token text not null,
+                upload_status text not null,
+                created_at timestamptz not null default now(),
+                uploaded_at timestamptz
+              );
+            `);
+            await client.query(`
+              create table if not exists ranking_jobs (
+                id text primary key,
+                method text not null,
+                target_count integer not null,
+                asset_ids jsonb not null,
+                listing_context jsonb not null default '{"listing_intent":"sale","property_type":"other"}'::jsonb,
+                policy jsonb not null,
+                status text not null,
+                provider_name text,
+                model_version text,
+                result jsonb,
+                error text,
+                created_at timestamptz not null default now(),
+                updated_at timestamptz not null default now()
+              );
+            `);
+            await client.query(`
+              alter table ranking_jobs
+              add column if not exists listing_context jsonb not null default '{"listing_intent":"sale","property_type":"other"}'::jsonb
+            `);
+            await client.query(`
+              create table if not exists feedback (
+                id text primary key,
+                ranking_id text not null references ranking_jobs(id) on delete cascade,
+                ordered_asset_ids jsonb not null,
+                corrected_labels jsonb not null,
+                notes text,
+                exported boolean not null default false,
+                created_at timestamptz not null default now()
+              );
+            `);
+            this.schemaReady = true;
+          }
+        } finally {
+          await client.query("select pg_advisory_unlock($1)", [POSTGRES_SCHEMA_LOCK_ID]);
+        }
       }
       return await callback(client);
     } finally {

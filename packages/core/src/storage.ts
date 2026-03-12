@@ -5,6 +5,8 @@ import type { Pool, PoolClient } from "pg";
 import type { AssetRecord, UploadTargetInternal } from "./schemas";
 import { getBaseUrl } from "./utils";
 
+const POSTGRES_SCHEMA_LOCK_ID = 91834721;
+
 export type StoredObject = {
   body: Buffer;
   contentType: string;
@@ -91,15 +93,22 @@ export class PostgresStorageAdapter implements StorageAdapter {
     const client = await this.pool.connect();
     try {
       if (!this.schemaReady) {
-        await client.query(`
-          create table if not exists asset_objects (
-            asset_id text primary key references assets(id) on delete cascade,
-            body bytea not null,
-            content_type text not null,
-            updated_at timestamptz not null default now()
-          );
-        `);
-        this.schemaReady = true;
+        await client.query("select pg_advisory_lock($1)", [POSTGRES_SCHEMA_LOCK_ID]);
+        try {
+          if (!this.schemaReady) {
+            await client.query(`
+              create table if not exists asset_objects (
+                asset_id text primary key references assets(id) on delete cascade,
+                body bytea not null,
+                content_type text not null,
+                updated_at timestamptz not null default now()
+              );
+            `);
+            this.schemaReady = true;
+          }
+        } finally {
+          await client.query("select pg_advisory_unlock($1)", [POSTGRES_SCHEMA_LOCK_ID]);
+        }
       }
       return await callback(client);
     } finally {
