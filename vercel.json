@@ -1,6 +1,6 @@
 {
   "installCommand": "npm install",
-  "buildCommand": "npm run build --workspace @listing-photo-ranker/web",
+  "buildCommand": "cd apps/web && npx next build",
   "outputDirectory": "apps/web/.next",
   "framework": "nextjs"
 }
