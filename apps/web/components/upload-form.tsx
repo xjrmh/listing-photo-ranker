@@ -12,6 +12,7 @@ import {
   setCachedUploadFiles,
   setStatelessRankingSession
 } from "../lib/stateless-ranking-session";
+import { needsStatelessUploadOptimization, prepareStatelessUploadFiles } from "../lib/stateless-upload";
 
 type UploadFormProps = {
   runtimeMode: AppRuntimeMode;
@@ -133,15 +134,24 @@ export function UploadForm({ runtimeMode }: UploadFormProps) {
 
     try {
       if (runtimeMode === "stateless") {
+        if (needsStatelessUploadOptimization(files)) {
+          setStatus("Optimizing photos for stateless upload...");
+        }
+
+        const { files: uploadFiles, optimized } = await prepareStatelessUploadFiles(files);
         const options = buildWebSyncRankingOptions({
           method,
-          targetCount: Math.min(targetCount, files.length),
+          targetCount: Math.min(targetCount, uploadFiles.length),
           propertyType,
           policy: { preferExteriorHero, dedupe, requireRoomDiversity }
         });
         const formData = new FormData();
-        files.forEach((file) => formData.append("files", file, file.name));
+        uploadFiles.forEach((file) => formData.append("files", file, file.name));
         appendSyncRankingOptions(formData, options);
+
+        if (optimized) {
+          setStatus("Ranking optimized photos...");
+        }
 
         const rankingResponse = await fetchWithTimeout(
           "/api/v1/rankings/sync",

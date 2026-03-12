@@ -1102,6 +1102,12 @@ textarea {
     --shell: calc(100vw - 32px);
   }
 
+  .field input,
+  .field select,
+  .field textarea {
+    font-size: 16px;
+  }
+
   .app-shell {
     padding: 0 0 24px;
   }
