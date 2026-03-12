@@ -3,10 +3,15 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
-import type { AppRuntimeMode, FeedbackRequest, PropertyType, RankingResult } from "@listing-photo-ranker/core";
+import type { AppRuntimeMode, PropertyType, RankingResult } from "@listing-photo-ranker/core";
 
 import { buildWebRankingRequest, buildWebSyncRankingOptions } from "../lib/ranking-request";
-import { RankingReviewWorkspace } from "./ranking-review-workspace";
+import {
+  clearStatelessRankingSession,
+  getCachedUploadFiles,
+  setCachedUploadFiles,
+  setStatelessRankingSession
+} from "../lib/stateless-ranking-session";
 
 type UploadFormProps = {
   runtimeMode: AppRuntimeMode;
@@ -29,9 +34,6 @@ const MAX_VISIBLE_THUMBS = 6;
 const CONTROL_REQUEST_TIMEOUT_MS = 15_000;
 const DIRECT_UPLOAD_TIMEOUT_MS = 60_000;
 const SYNC_RANKING_TIMEOUT_MS = 60_000;
-
-// Persists across client-side navigation within the same browser session
-let _cachedFiles: File[] = [];
 
 async function readErrorMessage(response: Response, fallback: string): Promise<string> {
   const contentType = response.headers.get("content-type") ?? "";
@@ -91,27 +93,14 @@ function appendSyncRankingOptions(formData: FormData, options: ReturnType<typeof
   formData.append("require_room_diversity", String(options.policy?.require_room_diversity ?? true));
 }
 
-function downloadFeedbackExport(payload: FeedbackRequest): string {
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = "ranking-feedback.json";
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 0);
-  return "Feedback JSON downloaded.";
-}
-
 export function UploadForm({ runtimeMode }: UploadFormProps) {
   const defaultTargetCount = 8;
   const router = useRouter();
-  const [files, setFiles] = useState<File[]>(_cachedFiles);
+  const [files, setFiles] = useState<File[]>(() => getCachedUploadFiles());
   const [thumbUrls, setThumbUrls] = useState<string[]>([]);
   const [method, setMethod] = useState<"llm_judge" | "cv">("llm_judge");
   const [targetCount, setTargetCount] = useState(() =>
-    _cachedFiles.length > 0 ? Math.min(defaultTargetCount, _cachedFiles.length) : defaultTargetCount
+    files.length > 0 ? Math.min(defaultTargetCount, files.length) : defaultTargetCount
   );
   const [preferExteriorHero, setPreferExteriorHero] = useState(true);
   const [dedupe, setDedupe] = useState(true);
@@ -119,16 +108,7 @@ export function UploadForm({ runtimeMode }: UploadFormProps) {
   const [propertyType, setPropertyType] = useState<PropertyType>("other");
   const [status, setStatus] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [statelessResult, setStatelessResult] = useState<RankingResult | null>(null);
-  const [statelessPreviewUrlByImageId, setStatelessPreviewUrlByImageId] = useState<Record<string, string>>({});
   const prevUrlsRef = useRef<string[]>([]);
-  const statelessPreviewUrlsRef = useRef<string[]>([]);
-
-  function clearStatelessPreviewUrls() {
-    statelessPreviewUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
-    statelessPreviewUrlsRef.current = [];
-    setStatelessPreviewUrlByImageId({});
-  }
 
   // Generate object URLs for thumbnail previews, revoke old ones on change
   useEffect(() => {
@@ -140,12 +120,6 @@ export function UploadForm({ runtimeMode }: UploadFormProps) {
       urls.forEach((url) => URL.revokeObjectURL(url));
     };
   }, [files]);
-
-  useEffect(() => {
-    return () => {
-      clearStatelessPreviewUrls();
-    };
-  }, []);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -184,18 +158,9 @@ export function UploadForm({ runtimeMode }: UploadFormProps) {
         }
 
         const result = (await rankingResponse.json()) as RankingResult;
-        clearStatelessPreviewUrls();
-        const nextPreviewUrlByImageId = Object.fromEntries(
-          files.map((file, index) => {
-            const url = URL.createObjectURL(file);
-            statelessPreviewUrlsRef.current.push(url);
-            return [`sync_${index + 1}`, url];
-          })
-        );
-
-        setStatelessPreviewUrlByImageId(nextPreviewUrlByImageId);
-        setStatelessResult(result);
+        setStatelessRankingSession(files, result);
         setStatus("");
+        router.push("/rankings/stateless");
       } else {
         const uploadResponse = await fetchWithTimeout(
           "/api/v1/uploads",
@@ -310,12 +275,11 @@ export function UploadForm({ runtimeMode }: UploadFormProps) {
                 accept="image/*"
                 onChange={(event) => {
                   const nextFiles = Array.from(event.target.files ?? []);
-                  _cachedFiles = nextFiles;
+                  setCachedUploadFiles(nextFiles);
                   setFiles(nextFiles);
                   setTargetCount((current) => Math.min(Math.max(current, 1), Math.max(nextFiles.length, 1)));
                   setStatus("");
-                  setStatelessResult(null);
-                  clearStatelessPreviewUrls();
+                  clearStatelessRankingSession();
                 }}
               />
               <svg className="dropzone-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -425,35 +389,6 @@ export function UploadForm({ runtimeMode }: UploadFormProps) {
           </div>
         </form>
       </section>
-
-      {runtimeMode === "stateless" && statelessResult ? (
-        <section className="home-grid-span">
-          <RankingReviewWorkspace
-            result={statelessResult}
-            headerMeta={`${statelessResult.method} · stateless · completed`}
-            title="Review ranked gallery"
-            subtitle="Edit labels and sequence, then export the feedback JSON locally."
-            feedbackActionLabel="Export feedback JSON"
-            feedbackPendingLabel="Preparing export..."
-            idleFeedbackMessage="Ready to export feedback JSON"
-            previewUrlByImageId={statelessPreviewUrlByImageId}
-            onSubmitFeedback={async (payload) => downloadFeedbackExport(payload)}
-            actions={
-              <button
-                className="button button-secondary button-sm"
-                type="button"
-                onClick={() => {
-                  setStatelessResult(null);
-                  clearStatelessPreviewUrls();
-                  setStatus("");
-                }}
-              >
-                Clear result
-              </button>
-            }
-          />
-        </section>
-      ) : null}
     </>
   );
 }

@@ -214,7 +214,7 @@ export function RankingReviewWorkspace({
               >
                 <div className="photo-rank">#{index + 1}</div>
                 <div className="photo-thumb">
-                  <img src={photo.preview_url} alt={photo.file_name} />
+                  <img src={photo.preview_url || undefined} alt={photo.file_name} />
                 </div>
 
                 <div className="photo-content">
@@ -245,7 +245,7 @@ export function RankingReviewWorkspace({
           {selectedPhoto ? (
             <div className="editor-stack">
               <div className="editor-preview">
-                <img src={selectedPhoto.preview_url} alt={selectedPhoto.file_name} />
+                <img src={selectedPhoto.preview_url || undefined} alt={selectedPhoto.file_name} />
               </div>
 
               <div className="editor-body">
