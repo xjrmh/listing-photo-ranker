@@ -1,0 +1,13 @@
+{
+  "name": "@listing-photo-ranker/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "listing-photo-ranker": "./bin/listing-photo-ranker.js"
+  },
+  "dependencies": {
+    "@listing-photo-ranker/core": "*"
+  }
+}
+
