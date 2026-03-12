@@ -1,6 +1,6 @@
 import { FeedbackRequestSchema } from "@listing-photo-ranker/core";
 
-import { checkApiKey, getServerApp, jsonError } from "../../../../../../lib/http";
+import { checkApiKey, getServerApp, jsonError, requireStatefulMode } from "../../../../../../lib/http";
 
 export const runtime = "nodejs";
 
@@ -11,6 +11,11 @@ export async function POST(
   const authError = checkApiKey(request);
   if (authError) {
     return authError;
+  }
+
+  const modeError = requireStatefulMode();
+  if (modeError) {
+    return modeError;
   }
 
   try {

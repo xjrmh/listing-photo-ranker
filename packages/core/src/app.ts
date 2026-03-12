@@ -7,17 +7,20 @@ import { MemoryRepository, PostgresRepository, type Repository } from "./reposit
 import {
   AssetRecordSchema,
   CreateRankingRequestSchema,
+  CreateSyncRankingOptionsSchema,
   CreateUploadRequestSchema,
   FeedbackRecordSchema,
   FeedbackRequestSchema,
   RankingJobSchema,
   type AssetRecord,
   type CreateRankingRequest,
+  type CreateSyncRankingOptions,
   type CreateUploadRequest,
   type CreateUploadResponse,
   type FeedbackRecord,
   type FeedbackRequest,
-  type RankingJob
+  type RankingJob,
+  type RankingResult
 } from "./schemas";
 import { InngestJobScheduler, InlineJobScheduler, type JobScheduler } from "./scheduler";
 import { LocalStorageAdapter, PostgresStorageAdapter, S3StorageAdapter, type StorageAdapter } from "./storage";
@@ -29,6 +32,7 @@ export type AppServices = {
   putUploadedAsset(assetId: string, token: string, body: Buffer, contentType?: string): Promise<AssetRecord>;
   getAsset(assetId: string): Promise<AssetRecord | null>;
   getAssetContent(assetId: string): Promise<{ body: Buffer; contentType: string; fileName: string }>;
+  rankFilesSync(request: CreateSyncRankingOptions, files: SyncRankingFile[]): Promise<RankingResult>;
   createRankingJob(request: CreateRankingRequest): Promise<RankingJob>;
   getRankingJob(rankingId: string, options?: { baseUrl?: string }): Promise<RankingJob | null>;
   processRankingJob(rankingId: string): Promise<void>;
@@ -48,6 +52,14 @@ type AppConfig = {
 export type AppInfrastructure = {
   repository: "memory" | "postgres";
   storage: "local" | "postgres" | "s3";
+};
+
+export type AppRuntimeMode = "stateful" | "stateless";
+
+export type SyncRankingFile = {
+  file_name: string;
+  content_type: string;
+  bytes: Buffer;
 };
 
 declare global {
@@ -91,11 +103,16 @@ export function createInngestClient(): Inngest {
   });
 }
 
+export function resolveAppRuntimeMode(env: NodeJS.ProcessEnv = process.env): AppRuntimeMode {
+  return env.APP_RUNTIME_MODE === "stateless" ? "stateless" : "stateful";
+}
+
 export function resolveAppInfrastructure(env: NodeJS.ProcessEnv = process.env): AppInfrastructure {
+  const runtimeMode = resolveAppRuntimeMode(env);
   const hasDatabase = Boolean(env.DATABASE_URL);
   const hasS3 = env.STORAGE_PROVIDER === "s3" && Boolean(env.S3_BUCKET);
 
-  if (env.VERCEL && !hasDatabase) {
+  if (runtimeMode === "stateful" && env.VERCEL && !hasDatabase) {
     throw new Error(
       "DATABASE_URL is required on Vercel. In-memory uploads and rankings do not work across serverless requests."
     );
@@ -111,6 +128,15 @@ export function resolveAppInfrastructure(env: NodeJS.ProcessEnv = process.env): 
   return {
     repository: "memory",
     storage: hasS3 ? "s3" : "local"
+  };
+}
+
+function createProviders() {
+  return {
+    llmProvider: new HeuristicLlmJudgeProvider({
+      modelVersion: process.env.LLM_JUDGE_MODEL ?? "gpt-5.4"
+    }),
+    cvProvider: new HeuristicCvProvider()
   };
 }
 
@@ -138,6 +164,25 @@ function createStorage(infrastructure: AppInfrastructure, pool?: Pool): StorageA
 }
 
 export function createApp(config: AppConfig): AppServices {
+  async function rankProviderInputs(
+    providerInputs: Array<{ asset: AssetRecord; bytes: Buffer }>,
+    request: CreateSyncRankingOptions
+  ): Promise<RankingResult> {
+    const parsed = CreateSyncRankingOptionsSchema.parse(request);
+    const provider = (parsed.method === "llm_judge" ? config.llmProvider : config.cvProvider) as RankingProvider;
+    const rawAssessments = await provider.analyze(providerInputs);
+    const duplicateGroups = buildDuplicateGroups(rawAssessments);
+    return buildRankingResult({
+      assessments: addDuplicateIssue(rawAssessments, duplicateGroups),
+      method: parsed.method,
+      listingContext: parsed.listing_context,
+      policy: parsed.policy,
+      targetCount: parsed.target_count,
+      providerName: provider.providerName,
+      modelVersion: provider.modelVersion
+    });
+  }
+
   return {
     async createUploadSession(request, options) {
       const parsed = CreateUploadRequestSchema.parse(request);
@@ -205,6 +250,34 @@ export function createApp(config: AppConfig): AppServices {
       };
     },
 
+    async rankFilesSync(request, files) {
+      CreateUploadRequestSchema.parse({
+        files: files.map((file) => ({
+          file_name: file.file_name,
+          content_type: file.content_type,
+          size_bytes: file.bytes.byteLength
+        }))
+      });
+
+      const now = nowIso();
+      const providerInputs = files.map((file, index) => ({
+        asset: AssetRecordSchema.parse({
+          asset_id: `sync_${index + 1}`,
+          file_name: file.file_name,
+          content_type: file.content_type,
+          byte_size: file.bytes.byteLength,
+          storage_key: `stateless/${index + 1}/${safeFileName(file.file_name)}`,
+          upload_token: `stateless_${index + 1}`,
+          upload_status: "uploaded",
+          created_at: now,
+          uploaded_at: now
+        }),
+        bytes: file.bytes
+      }));
+
+      return rankProviderInputs(providerInputs, request);
+    },
+
     async createRankingJob(request) {
       const parsed = CreateRankingRequestSchema.parse(request);
       const assets = await config.repository.listAssets(parsed.asset_ids);
@@ -257,7 +330,6 @@ export function createApp(config: AppConfig): AppServices {
 
       try {
         const assets = await config.repository.listAssets(job.asset_ids);
-        const provider = (job.method === "llm_judge" ? config.llmProvider : config.cvProvider) as RankingProvider;
         const providerInputs = await Promise.all(
           assets.map(async (asset) => {
             const object = await config.storage.getObject(asset);
@@ -267,23 +339,20 @@ export function createApp(config: AppConfig): AppServices {
             };
           })
         );
-
-        const rawAssessments = await provider.analyze(providerInputs);
-        const duplicateGroups = buildDuplicateGroups(rawAssessments);
-        const rankingResult = buildRankingResult({
-          assessments: addDuplicateIssue(rawAssessments, duplicateGroups),
-          method: job.method,
-          listingContext: job.listing_context,
-          policy: job.policy,
-          targetCount: job.target_count,
-          providerName: provider.providerName,
-          modelVersion: provider.modelVersion
-        });
+        const rankingResult = await rankProviderInputs(
+          providerInputs,
+          {
+            method: job.method,
+            target_count: job.target_count,
+            listing_context: job.listing_context,
+            policy: job.policy
+          }
+        );
 
         await config.repository.updateRanking(rankingId, {
           status: "completed",
-          provider_name: provider.providerName,
-          model_version: provider.modelVersion,
+          provider_name: rankingResult.provider_name,
+          model_version: rankingResult.model_version,
           result: rankingResult,
           error: null
         });
@@ -345,10 +414,7 @@ export function getApp(): AppServices {
         : undefined;
     const repository = createRepository(infrastructure, pool);
     const storage = createStorage(infrastructure, pool);
-    const llmProvider = new HeuristicLlmJudgeProvider({
-      modelVersion: process.env.LLM_JUDGE_MODEL ?? "gpt-5.4"
-    });
-    const cvProvider = new HeuristicCvProvider();
+    const { llmProvider, cvProvider } = createProviders();
     const inngest = createInngestClient();
     let appRef: AppServices | undefined;
     const scheduler =

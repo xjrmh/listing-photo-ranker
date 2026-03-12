@@ -21,3 +21,11 @@ test("integration guide can render CLI instructions", () => {
   assert.match(html, /node packages\/cli\/bin\/listing-photo-ranker\.js status/);
   assert.match(html, /--api-base-url/);
 });
+
+test("integration guide renders stateless sync instructions", () => {
+  const html = renderToStaticMarkup(createElement(IntegrationGuide, { runtimeMode: "stateless", initialMode: "api" }));
+
+  assert.match(html, /\/api\/v1\/rankings\/sync/);
+  assert.match(html, /multipart\/form-data/);
+  assert.match(html, /client-side/);
+});

@@ -1,4 +1,4 @@
-import { getApp } from "@listing-photo-ranker/core";
+import { getApp, resolveAppRuntimeMode, type AppRuntimeMode } from "@listing-photo-ranker/core";
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 import { readCookie, WEB_UI_API_COOKIE_NAME, WEB_UI_API_TOKEN_CONTEXT } from "./api-auth";
@@ -40,6 +40,21 @@ export function getBaseUrlFromRequest(request: Request): string {
 
 export function jsonError(message: string, status = 400): Response {
   return Response.json({ error: message }, { status });
+}
+
+export function getAppRuntimeMode(env: NodeJS.ProcessEnv = process.env): AppRuntimeMode {
+  return resolveAppRuntimeMode(env);
+}
+
+export function requireStatefulMode(): Response | null {
+  if (getAppRuntimeMode() === "stateful") {
+    return null;
+  }
+
+  return jsonError(
+    "This endpoint requires APP_RUNTIME_MODE=stateful. Use /api/v1/rankings/sync in stateless mode.",
+    409
+  );
 }
 
 function hasValidBrowserApiCookie(request: Request, apiKey: string): boolean {

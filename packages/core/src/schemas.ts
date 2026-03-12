@@ -109,6 +109,11 @@ export const CreateRankingRequestSchema = z.object({
 });
 export type CreateRankingRequest = z.input<typeof CreateRankingRequestSchema>;
 
+export const CreateSyncRankingOptionsSchema = CreateRankingRequestSchema.omit({
+  asset_ids: true
+});
+export type CreateSyncRankingOptions = z.input<typeof CreateSyncRankingOptionsSchema>;
+
 export const RankingStatusSchema = z.enum(["pending", "processing", "completed", "failed"]);
 export type RankingStatus = z.infer<typeof RankingStatusSchema>;
 

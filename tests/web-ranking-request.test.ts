@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildWebRankingRequest } from "../apps/web/lib/ranking-request";
+import { buildWebRankingRequest, buildWebSyncRankingOptions } from "../apps/web/lib/ranking-request";
 
 test("web rank request preserves property type and advanced policy toggles", () => {
   const request = buildWebRankingRequest({
@@ -24,5 +24,32 @@ test("web rank request preserves property type and advanced policy toggles", () 
     prefer_exterior_hero: false,
     dedupe: true,
     require_room_diversity: false
+  });
+});
+
+test("web sync ranking options preserve property type and advanced policy toggles", () => {
+  const request = buildWebSyncRankingOptions({
+    method: "cv",
+    targetCount: 3,
+    propertyType: "condo",
+    policy: {
+      preferExteriorHero: true,
+      dedupe: false,
+      requireRoomDiversity: true
+    }
+  });
+
+  assert.deepEqual(request, {
+    method: "cv",
+    target_count: 3,
+    listing_context: {
+      listing_intent: "sale",
+      property_type: "condo"
+    },
+    policy: {
+      prefer_exterior_hero: true,
+      dedupe: false,
+      require_room_diversity: true
+    }
   });
 });

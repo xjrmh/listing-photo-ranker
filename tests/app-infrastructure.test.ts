@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { resolveAppInfrastructure } from "@listing-photo-ranker/core";
+import { resolveAppInfrastructure, resolveAppRuntimeMode } from "@listing-photo-ranker/core";
 
 function env(values: Partial<NodeJS.ProcessEnv>): NodeJS.ProcessEnv {
   return {
@@ -45,4 +45,15 @@ test("app infrastructure rejects Vercel deployments without a database", () => {
     () => resolveAppInfrastructure(env({ VERCEL: "1" })),
     /DATABASE_URL is required on Vercel/
   );
+});
+
+test("app runtime mode defaults to stateful", () => {
+  assert.equal(resolveAppRuntimeMode(env({})), "stateful");
+});
+
+test("app infrastructure allows stateless Vercel deployments without a database", () => {
+  assert.deepEqual(resolveAppInfrastructure(env({ VERCEL: "1", APP_RUNTIME_MODE: "stateless" })), {
+    repository: "memory",
+    storage: "local"
+  });
 });

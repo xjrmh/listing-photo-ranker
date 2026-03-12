@@ -3,9 +3,14 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
-import type { PropertyType } from "@listing-photo-ranker/core";
+import type { AppRuntimeMode, FeedbackRequest, PropertyType, RankingResult } from "@listing-photo-ranker/core";
 
-import { buildWebRankingRequest } from "../lib/ranking-request";
+import { buildWebRankingRequest, buildWebSyncRankingOptions } from "../lib/ranking-request";
+import { RankingReviewWorkspace } from "./ranking-review-workspace";
+
+type UploadFormProps = {
+  runtimeMode: AppRuntimeMode;
+};
 
 type UploadResponse = {
   files: Array<{
@@ -50,7 +55,29 @@ async function readErrorMessage(response: Response, fallback: string): Promise<s
   return fallback;
 }
 
-export function UploadForm() {
+function appendSyncRankingOptions(formData: FormData, options: ReturnType<typeof buildWebSyncRankingOptions>) {
+  formData.append("method", options.method);
+  formData.append("target_count", String(options.target_count));
+  formData.append("property_type", options.listing_context?.property_type ?? "other");
+  formData.append("prefer_exterior_hero", String(options.policy?.prefer_exterior_hero ?? true));
+  formData.append("dedupe", String(options.policy?.dedupe ?? true));
+  formData.append("require_room_diversity", String(options.policy?.require_room_diversity ?? true));
+}
+
+function downloadFeedbackExport(payload: FeedbackRequest): string {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "ranking-feedback.json";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  return "Feedback JSON downloaded.";
+}
+
+export function UploadForm({ runtimeMode }: UploadFormProps) {
   const defaultTargetCount = 8;
   const router = useRouter();
   const [files, setFiles] = useState<File[]>(_cachedFiles);
@@ -65,7 +92,16 @@ export function UploadForm() {
   const [propertyType, setPropertyType] = useState<PropertyType>("other");
   const [status, setStatus] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [statelessResult, setStatelessResult] = useState<RankingResult | null>(null);
+  const [statelessPreviewUrlByImageId, setStatelessPreviewUrlByImageId] = useState<Record<string, string>>({});
   const prevUrlsRef = useRef<string[]>([]);
+  const statelessPreviewUrlsRef = useRef<string[]>([]);
+
+  function clearStatelessPreviewUrls() {
+    statelessPreviewUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+    statelessPreviewUrlsRef.current = [];
+    setStatelessPreviewUrlByImageId({});
+  }
 
   // Generate object URLs for thumbnail previews, revoke old ones on change
   useEffect(() => {
@@ -78,6 +114,12 @@ export function UploadForm() {
     };
   }, [files]);
 
+  useEffect(() => {
+    return () => {
+      clearStatelessPreviewUrls();
+    };
+  }, []);
+
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (files.length === 0) {
@@ -86,67 +128,102 @@ export function UploadForm() {
     }
 
     setSubmitting(true);
-    setStatus("Creating upload targets...");
+    setStatus(runtimeMode === "stateless" ? "Ranking photos..." : "Creating upload targets...");
 
     try {
-      const uploadResponse = await fetch("/api/v1/uploads", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          files: files.map((file) => ({
-            file_name: file.name,
-            content_type: file.type || "application/octet-stream",
-            size_bytes: file.size
-          }))
-        })
-      });
+      if (runtimeMode === "stateless") {
+        const options = buildWebSyncRankingOptions({
+          method,
+          targetCount: Math.min(targetCount, files.length),
+          propertyType,
+          policy: { preferExteriorHero, dedupe, requireRoomDiversity }
+        });
+        const formData = new FormData();
+        files.forEach((file) => formData.append("files", file, file.name));
+        appendSyncRankingOptions(formData, options);
 
-      if (!uploadResponse.ok) {
-        throw new Error(await readErrorMessage(uploadResponse, "Failed to create upload targets."));
-      }
+        const rankingResponse = await fetch("/api/v1/rankings/sync", {
+          method: "POST",
+          body: formData
+        });
 
-      const uploadPayload = (await uploadResponse.json()) as UploadResponse;
-      setStatus("Uploading images...");
+        if (!rankingResponse.ok) {
+          throw new Error(await readErrorMessage(rankingResponse, "Failed to rank uploaded files."));
+        }
 
-      await Promise.all(
-        uploadPayload.files.map(async (asset, index) => {
-          const file = files[index];
-          const headers = new Headers(asset.headers);
-          if (!headers.has("content-type")) {
-            headers.set("content-type", file.type || "application/octet-stream");
-          }
-          const response = await fetch(asset.upload_url, {
-            method: "PUT",
-            headers,
-            body: file
-          });
-          if (!response.ok) {
-            throw new Error(await readErrorMessage(response, `Failed to upload ${asset.file_name}.`));
-          }
-        })
-      );
-
-      setStatus("Queueing ranking job...");
-      const rankingResponse = await fetch("/api/v1/rankings", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(
-          buildWebRankingRequest({
-            method,
-            targetCount: Math.min(targetCount, files.length),
-            assetIds: uploadPayload.files.map((file) => file.asset_id),
-            propertyType,
-            policy: { preferExteriorHero, dedupe, requireRoomDiversity }
+        const result = (await rankingResponse.json()) as RankingResult;
+        clearStatelessPreviewUrls();
+        const nextPreviewUrlByImageId = Object.fromEntries(
+          files.map((file, index) => {
+            const url = URL.createObjectURL(file);
+            statelessPreviewUrlsRef.current.push(url);
+            return [`sync_${index + 1}`, url];
           })
-        )
-      });
+        );
 
-      if (!rankingResponse.ok) {
-        throw new Error(await readErrorMessage(rankingResponse, "Failed to queue ranking job."));
+        setStatelessPreviewUrlByImageId(nextPreviewUrlByImageId);
+        setStatelessResult(result);
+        setStatus("");
+      } else {
+        const uploadResponse = await fetch("/api/v1/uploads", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            files: files.map((file) => ({
+              file_name: file.name,
+              content_type: file.type || "application/octet-stream",
+              size_bytes: file.size
+            }))
+          })
+        });
+
+        if (!uploadResponse.ok) {
+          throw new Error(await readErrorMessage(uploadResponse, "Failed to create upload targets."));
+        }
+
+        const uploadPayload = (await uploadResponse.json()) as UploadResponse;
+        setStatus("Uploading images...");
+
+        await Promise.all(
+          uploadPayload.files.map(async (asset, index) => {
+            const file = files[index];
+            const headers = new Headers(asset.headers);
+            if (!headers.has("content-type")) {
+              headers.set("content-type", file.type || "application/octet-stream");
+            }
+            const response = await fetch(asset.upload_url, {
+              method: "PUT",
+              headers,
+              body: file
+            });
+            if (!response.ok) {
+              throw new Error(await readErrorMessage(response, `Failed to upload ${asset.file_name}.`));
+            }
+          })
+        );
+
+        setStatus("Queueing ranking job...");
+        const rankingResponse = await fetch("/api/v1/rankings", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(
+            buildWebRankingRequest({
+              method,
+              targetCount: Math.min(targetCount, files.length),
+              assetIds: uploadPayload.files.map((file) => file.asset_id),
+              propertyType,
+              policy: { preferExteriorHero, dedupe, requireRoomDiversity }
+            })
+          )
+        });
+
+        if (!rankingResponse.ok) {
+          throw new Error(await readErrorMessage(rankingResponse, "Failed to queue ranking job."));
+        }
+
+        const rankingPayload = (await rankingResponse.json()) as RankingResponse;
+        router.push(`/rankings/${rankingPayload.ranking_id}`);
       }
-
-      const rankingPayload = (await rankingResponse.json()) as RankingResponse;
-      router.push(`/rankings/${rankingPayload.ranking_id}`);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Upload failed.");
       setSubmitting(false);
@@ -160,132 +237,171 @@ export function UploadForm() {
   const isError = status.toLowerCase().includes("failed") || status.toLowerCase().includes("error") || status.toLowerCase().includes("choose");
 
   return (
-    <form className="upload-form" onSubmit={handleSubmit}>
-      <div className="stack-sm">
-        <h2 className="section-title">Upload photos</h2>
-        <p className="helper-text">
-          Add a gallery, choose your settings, and submit. Results appear on the review screen.
-        </p>
-      </div>
+    <>
+      <section className="card card-padded">
+        <form className="upload-form" onSubmit={handleSubmit}>
+          <div className="stack-sm">
+            <h2 className="section-title">Upload photos</h2>
+            <p className="helper-text">
+              {runtimeMode === "stateless"
+                ? "Add a gallery, choose your settings, and rank everything in one request."
+                : "Add a gallery, choose your settings, and submit. Results appear on the review screen."}
+            </p>
+          </div>
 
-      <div className="upload-dropzone">
-        <label htmlFor="photo-upload" className="dropzone-label">
-          <input
-            id="photo-upload"
-            type="file"
-            multiple
-            accept="image/*"
-            onChange={(event) => {
-              const nextFiles = Array.from(event.target.files ?? []);
-              _cachedFiles = nextFiles;
-              setFiles(nextFiles);
-              setTargetCount((current) => Math.min(Math.max(current, 1), Math.max(nextFiles.length, 1)));
-              setStatus("");
-            }}
-          />
-          <svg className="dropzone-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-            <circle cx="8.5" cy="8.5" r="1.5" />
-            <polyline points="21 15 16 10 5 21" />
-          </svg>
-          <span className="dropzone-title">
-            {files.length === 0 ? "Drop photos here or click to browse" : "Replace selection"}
-          </span>
-          <span className="dropzone-copy">
-            {files.length === 0
-              ? "JPG, PNG, WEBP, or GIF · Ranking starts after upload"
-              : `${files.length} photo${files.length === 1 ? "" : "s"} selected · click to change`}
-          </span>
-        </label>
+          <div className="upload-dropzone">
+            <label htmlFor="photo-upload" className="dropzone-label">
+              <input
+                id="photo-upload"
+                type="file"
+                multiple
+                accept="image/*"
+                onChange={(event) => {
+                  const nextFiles = Array.from(event.target.files ?? []);
+                  _cachedFiles = nextFiles;
+                  setFiles(nextFiles);
+                  setTargetCount((current) => Math.min(Math.max(current, 1), Math.max(nextFiles.length, 1)));
+                  setStatus("");
+                  setStatelessResult(null);
+                  clearStatelessPreviewUrls();
+                }}
+              />
+              <svg className="dropzone-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                <circle cx="8.5" cy="8.5" r="1.5" />
+                <polyline points="21 15 16 10 5 21" />
+              </svg>
+              <span className="dropzone-title">
+                {files.length === 0 ? "Drop photos here or click to browse" : "Replace selection"}
+              </span>
+              <span className="dropzone-copy">
+                {files.length === 0
+                  ? "JPG, PNG, WEBP, or GIF · Ranking starts after upload"
+                  : `${files.length} photo${files.length === 1 ? "" : "s"} selected · click to change`}
+              </span>
+            </label>
 
-        {thumbUrls.length > 0 && (
-          <div className="thumb-strip">
-            {thumbUrls.map((url, i) => (
-              <div key={i} className="thumb-item">
-                <img src={url} alt={files[i]?.name ?? `Photo ${i + 1}`} />
+            {thumbUrls.length > 0 && (
+              <div className="thumb-strip">
+                {thumbUrls.map((url, i) => (
+                  <div key={i} className="thumb-item">
+                    <img src={url} alt={files[i]?.name ?? `Photo ${i + 1}`} />
+                  </div>
+                ))}
+                {remainingCount > 0 && (
+                  <div className="thumb-item thumb-item-more">+{remainingCount}</div>
+                )}
               </div>
-            ))}
-            {remainingCount > 0 && (
-              <div className="thumb-item thumb-item-more">+{remainingCount}</div>
             )}
           </div>
-        )}
-      </div>
 
-      <div className="control-grid">
-        <div className="field">
-          <label htmlFor="method">Ranking method</label>
-          <select id="method" value={method} onChange={(event) => setMethod(event.target.value as "llm_judge" | "cv")}>
-            <option value="llm_judge">LLM judge</option>
-            <option value="cv">Computer vision</option>
-          </select>
-        </div>
+          <div className="control-grid">
+            <div className="field">
+              <label htmlFor="method">Ranking method</label>
+              <select id="method" value={method} onChange={(event) => setMethod(event.target.value as "llm_judge" | "cv")}>
+                <option value="llm_judge">LLM judge</option>
+                <option value="cv">Computer vision</option>
+              </select>
+            </div>
 
-        <div className="field">
-          <label htmlFor="target-count">Photos to keep</label>
-          <input
-            id="target-count"
-            type="number"
-            min={1}
-            max={Math.max(files.length, 1)}
-            value={targetCount}
-            onChange={(event) => setTargetCount(Number(event.target.value))}
+            <div className="field">
+              <label htmlFor="target-count">Photos to keep</label>
+              <input
+                id="target-count"
+                type="number"
+                min={1}
+                max={Math.max(files.length, 1)}
+                value={targetCount}
+                onChange={(event) => setTargetCount(Number(event.target.value))}
+              />
+            </div>
+
+            <div className="field">
+              <label htmlFor="property-type">Property type</label>
+              <select id="property-type" value={propertyType} onChange={(event) => setPropertyType(event.target.value as PropertyType)}>
+                <option value="other">Generic listing</option>
+                <option value="single_family">Single family</option>
+                <option value="condo">Condo</option>
+                <option value="townhouse">Townhouse</option>
+                <option value="multi_family">Multi family</option>
+              </select>
+            </div>
+          </div>
+
+          <details className="advanced-settings">
+            <summary>Advanced options</summary>
+            <div className="toggle-grid">
+              <label className="toggle-card">
+                <input type="checkbox" checked={preferExteriorHero} onChange={(event) => setPreferExteriorHero(event.target.checked)} />
+                <div>
+                  <strong>Prefer exterior hero</strong>
+                  <span>Bias the first position toward strong exterior coverage when available.</span>
+                </div>
+              </label>
+
+              <label className="toggle-card">
+                <input type="checkbox" checked={dedupe} onChange={(event) => setDedupe(event.target.checked)} />
+                <div>
+                  <strong>Suppress near duplicates</strong>
+                  <span>Down-rank repeated angles and visually similar images.</span>
+                </div>
+              </label>
+
+              <label className="toggle-card">
+                <input
+                  type="checkbox"
+                  checked={requireRoomDiversity}
+                  onChange={(event) => setRequireRoomDiversity(event.target.checked)}
+                />
+                <div>
+                  <strong>Diversify early sequence</strong>
+                  <span>Spread room and view types near the top of the gallery.</span>
+                </div>
+              </label>
+            </div>
+          </details>
+
+          <div className="submit-area">
+            <button className="button button-primary" disabled={submitting} style={{ width: "100%" }}>
+              {submitting
+                ? runtimeMode === "stateless" ? "Ranking..." : "Submitting..."
+                : runtimeMode === "stateless" ? "Rank now" : "Create ranking"}
+            </button>
+            {status && (
+              <p className={`status-text${isError ? " error" : ""}`}>{status}</p>
+            )}
+          </div>
+        </form>
+      </section>
+
+      {runtimeMode === "stateless" && statelessResult ? (
+        <section className="home-grid-span">
+          <RankingReviewWorkspace
+            result={statelessResult}
+            headerMeta={`${statelessResult.method} · stateless · completed`}
+            title="Review ranked gallery"
+            subtitle="Edit labels and sequence, then export the feedback JSON locally."
+            feedbackActionLabel="Export feedback JSON"
+            feedbackPendingLabel="Preparing export..."
+            idleFeedbackMessage="Ready to export feedback JSON"
+            previewUrlByImageId={statelessPreviewUrlByImageId}
+            onSubmitFeedback={async (payload) => downloadFeedbackExport(payload)}
+            actions={
+              <button
+                className="button button-secondary button-sm"
+                type="button"
+                onClick={() => {
+                  setStatelessResult(null);
+                  clearStatelessPreviewUrls();
+                  setStatus("");
+                }}
+              >
+                Clear result
+              </button>
+            }
           />
-        </div>
-
-        <div className="field">
-          <label htmlFor="property-type">Property type</label>
-          <select id="property-type" value={propertyType} onChange={(event) => setPropertyType(event.target.value as PropertyType)}>
-            <option value="other">Generic listing</option>
-            <option value="single_family">Single family</option>
-            <option value="condo">Condo</option>
-            <option value="townhouse">Townhouse</option>
-            <option value="multi_family">Multi family</option>
-          </select>
-        </div>
-      </div>
-
-      <details className="advanced-settings">
-        <summary>Advanced options</summary>
-        <div className="toggle-grid">
-          <label className="toggle-card">
-            <input type="checkbox" checked={preferExteriorHero} onChange={(event) => setPreferExteriorHero(event.target.checked)} />
-            <div>
-              <strong>Prefer exterior hero</strong>
-              <span>Bias the first position toward strong exterior coverage when available.</span>
-            </div>
-          </label>
-
-          <label className="toggle-card">
-            <input type="checkbox" checked={dedupe} onChange={(event) => setDedupe(event.target.checked)} />
-            <div>
-              <strong>Suppress near duplicates</strong>
-              <span>Down-rank repeated angles and visually similar images.</span>
-            </div>
-          </label>
-
-          <label className="toggle-card">
-            <input
-              type="checkbox"
-              checked={requireRoomDiversity}
-              onChange={(event) => setRequireRoomDiversity(event.target.checked)}
-            />
-            <div>
-              <strong>Diversify early sequence</strong>
-              <span>Spread room and view types near the top of the gallery.</span>
-            </div>
-          </label>
-        </div>
-      </details>
-
-      <div className="submit-area">
-        <button className="button button-primary" disabled={submitting} style={{ width: "100%" }}>
-          {submitting ? "Submitting..." : "Create ranking"}
-        </button>
-        {status && (
-          <p className={`status-text${isError ? " error" : ""}`}>{status}</p>
-        )}
-      </div>
-    </form>
+        </section>
+      ) : null}
+    </>
   );
 }

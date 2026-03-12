@@ -150,68 +150,77 @@ Expose three runtime modes:
 
 The ensemble mode will likely be the best long-term default.
 
+## Deployment Modes
+
+The app now supports two production runtime modes:
+
+- `APP_RUNTIME_MODE=stateful` (default): uses the existing async upload/job/status/feedback workflow and expects durable storage.
+- `APP_RUNTIME_MODE=stateless`: performs ranking in one multipart request, does not persist uploads or ranking jobs, and keeps review edits client-side only.
+
+For Vercel:
+
+- `stateful` mode still requires `DATABASE_URL`.
+- `stateless` mode does not require a database and is safe for no-persistence deployments.
+
 ## API Shape
 
 ### Core Endpoints
 
-`POST /v1/rankings`
+`POST /api/v1/rankings/sync`
 
-- upload or reference images
-- specify methodology and ranking policy
-- return a synchronous ranking for small jobs
+- synchronous multipart ranking
+- accepts repeated `files` parts plus ranking options
+- returns the final `RankingResult` immediately
 
-`POST /v1/jobs`
+`POST /api/v1/uploads`
 
-- create an async batch job for larger uploads
+- create upload targets for the async stateful flow
 
-`GET /v1/jobs/{job_id}`
+`POST /api/v1/rankings`
 
-- fetch job status and result metadata
+- create an async ranking job from uploaded asset ids
 
-`GET /v1/rankings/{ranking_id}`
+`GET /api/v1/rankings/{ranking_id}`
 
-- fetch the final ordered result
+- fetch async ranking status and final result metadata
 
-`POST /v1/feedback`
+`POST /api/v1/rankings/{ranking_id}/feedback`
 
-- capture user overrides, accepted order, and editorial corrections
+- capture feedback for the async stateful flow
 
 ### Example Request
 
-```json
-{
-  "listing_id": "listing_123",
-  "method": "ensemble",
-  "target_count": 20,
-  "images": [
-    {"image_id": "img_1", "url": "https://.../1.jpg"},
-    {"image_id": "img_2", "url": "https://.../2.jpg"}
-  ],
-  "policy": {
-    "prefer_exterior_hero": true,
-    "dedupe": true,
-    "require_room_diversity": true
-  }
-}
+```bash
+curl -X POST http://127.0.0.1:3000/api/v1/rankings/sync \
+  -F "files=@./photos/front-exterior.jpg" \
+  -F "files=@./photos/kitchen.jpg" \
+  -F "method=llm_judge" \
+  -F "target_count=8" \
+  -F "property_type=single_family" \
+  -F "prefer_exterior_hero=true" \
+  -F "dedupe=true" \
+  -F "require_room_diversity=true"
 ```
 
 ### Example Response
 
 ```json
 {
-  "ranking_id": "rank_123",
-  "method": "ensemble",
+  "method": "llm_judge",
   "ordered_images": [
     {"image_id": "img_2", "position": 1},
     {"image_id": "img_7", "position": 2},
     {"image_id": "img_1", "position": 3}
   ],
-  "hero_candidates": ["img_2", "img_7"],
   "diagnostics": {
     "duplicate_groups": [["img_4", "img_9"]],
     "missing_coverage": ["bathroom"],
-    "confidence": 0.82
-  }
+    "source_asset_count": 12,
+    "selected_asset_count": 8
+  },
+  "provider_name": "heuristic-llm-judge",
+  "model_version": "gpt-5.4",
+  "feedback_allowed": true
 }
 ```
 
@@ -222,6 +231,8 @@ The CLI should be optimized for operators and batch workflows.
 Example commands:
 
 ```bash
+listing-photo-ranker rank photos/*.jpg --sync --out ranking.json
+listing-photo-ranker rank ./listing-42 --sync --json
 listing-photo-ranker rank photos/*.jpg --method ensemble --out ranking.json
 listing-photo-ranker rank ./listing-42 --method llm_judge --top 15
 listing-photo-ranker feedback ranking.json --accepted-order accepted.json
@@ -232,6 +243,7 @@ Useful CLI flags:
 
 - `--method`
 - `--top`
+- `--sync`
 - `--format json|table`
 - `--async`
 - `--webhook-url`

@@ -1,6 +1,6 @@
 import { CreateUploadRequestSchema } from "@listing-photo-ranker/core";
 
-import { checkApiKey, getBaseUrlFromRequest, getServerApp, jsonError } from "../../../../lib/http";
+import { checkApiKey, getBaseUrlFromRequest, getServerApp, jsonError, requireStatefulMode } from "../../../../lib/http";
 
 export const runtime = "nodejs";
 
@@ -8,6 +8,11 @@ export async function POST(request: Request): Promise<Response> {
   const authError = checkApiKey(request);
   if (authError) {
     return authError;
+  }
+
+  const modeError = requireStatefulMode();
+  if (modeError) {
+    return modeError;
   }
 
   try {

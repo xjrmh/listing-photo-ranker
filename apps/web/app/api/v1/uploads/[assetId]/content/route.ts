@@ -1,4 +1,4 @@
-import { getServerApp, jsonError } from "../../../../../../lib/http";
+import { getServerApp, jsonError, requireStatefulMode } from "../../../../../../lib/http";
 
 export const runtime = "nodejs";
 
@@ -6,6 +6,11 @@ export async function GET(
   _request: Request,
   context: { params: Promise<{ assetId: string }> }
 ): Promise<Response> {
+  const modeError = requireStatefulMode();
+  if (modeError) {
+    return modeError;
+  }
+
   const params = await context.params;
 
   try {
@@ -26,6 +31,11 @@ export async function PUT(
   request: Request,
   context: { params: Promise<{ assetId: string }> }
 ): Promise<Response> {
+  const modeError = requireStatefulMode();
+  if (modeError) {
+    return modeError;
+  }
+
   const params = await context.params;
   const url = new URL(request.url);
   const token = url.searchParams.get("token");

@@ -1,8 +1,12 @@
+import { resolveAppRuntimeMode } from "@listing-photo-ranker/core";
+
 import { GitHubLink } from "../components/github-link";
 import { IntegrationGuide } from "../components/integration-guide";
 import { UploadForm } from "../components/upload-form";
 
 export default function HomePage() {
+  const runtimeMode = resolveAppRuntimeMode();
+
   return (
     <main className="app-shell">
       <nav className="site-nav">
@@ -23,10 +27,8 @@ export default function HomePage() {
       </header>
 
       <section className="home-grid">
-        <section className="card card-padded">
-          <UploadForm />
-        </section>
-        <IntegrationGuide />
+        <UploadForm runtimeMode={runtimeMode} />
+        <IntegrationGuide runtimeMode={runtimeMode} />
       </section>
 
       <footer className="app-footer">Powered by FlatRE.ai</footer>

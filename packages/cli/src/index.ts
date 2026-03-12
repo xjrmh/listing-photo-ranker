@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 import { readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 
-import { inferContentType, type FeedbackRequest, type PropertyType, type RankingJob } from "@listing-photo-ranker/core";
+import { inferContentType, type FeedbackRequest, type PropertyType, type RankingJob, type RankingResult } from "@listing-photo-ranker/core";
 
-import { buildCliRankingRequest } from "./rank-request";
+import { buildCliRankingRequest, buildCliSyncRankingOptions } from "./rank-request";
 
 type CommonFlags = {
   apiBaseUrl: string;
@@ -15,7 +16,7 @@ type CommonFlags = {
 
 function usage(): never {
   console.error(`Usage:
-  listing-photo-ranker rank <files...|directory> [--method llm_judge|cv] [--top 8] [--property-type single_family|condo|townhouse|multi_family|other] [--out result.json] [--api-base-url URL] [--api-key KEY] [--json]
+  listing-photo-ranker rank <files...|directory> [--sync] [--method llm_judge|cv] [--top 8] [--property-type single_family|condo|townhouse|multi_family|other] [--out result.json] [--api-base-url URL] [--api-key KEY] [--json]
   listing-photo-ranker status <ranking_id> [--api-base-url URL] [--api-key KEY] [--json]
   listing-photo-ranker feedback <ranking_id> --order-file feedback.json [--api-base-url URL] [--api-key KEY] [--json]`);
   process.exit(1);
@@ -33,6 +34,10 @@ function parseCommonFlags(tokens: string[]): { common: CommonFlags; values: Reco
         type: "string"
       },
       json: {
+        type: "boolean",
+        default: false
+      },
+      sync: {
         type: "boolean",
         default: false
       },
@@ -92,7 +97,7 @@ async function apiRequest<T>(common: CommonFlags, path: string, options: Request
   if (common.apiKey) {
     headers.set("x-api-key", common.apiKey);
   }
-  if (options.body && !headers.has("content-type")) {
+  if (options.body && !(options.body instanceof FormData) && !headers.has("content-type")) {
     headers.set("content-type", "application/json");
   }
 
@@ -122,6 +127,50 @@ async function handleRank(tokens: string[]) {
   const targetCount = Math.min(Number(values.top ?? files.length), files.length);
   const method = (values.method as "llm_judge" | "cv" | undefined) ?? "llm_judge";
   const propertyType = values["property-type"] as PropertyType | undefined;
+  const useSync = Boolean(values.sync);
+
+  if (useSync) {
+    const formData = new FormData();
+    const options = buildCliSyncRankingOptions({
+      method,
+      targetCount,
+      propertyType
+    });
+
+    for (const filePath of files) {
+      const bytes = await readFile(filePath);
+      formData.append("files", new Blob([bytes], { type: inferContentType(filePath) }), filePath.split("/").pop() ?? filePath);
+    }
+
+    formData.append("method", options.method);
+    formData.append("target_count", String(options.target_count));
+    formData.append("property_type", options.listing_context?.property_type ?? "other");
+    formData.append("prefer_exterior_hero", String(options.policy?.prefer_exterior_hero ?? true));
+    formData.append("dedupe", String(options.policy?.dedupe ?? true));
+    formData.append("require_room_diversity", String(options.policy?.require_room_diversity ?? true));
+
+    const ranking = await apiRequest<RankingResult>(common, "/api/v1/rankings/sync", {
+      method: "POST",
+      body: formData
+    });
+
+    if (typeof values.out === "string") {
+      await writeFile(resolve(values.out), JSON.stringify(ranking, null, 2));
+    }
+
+    if (common.json) {
+      console.log(JSON.stringify(ranking, null, 2));
+      return;
+    }
+
+    console.log(`Stateless ranking complete: ${ranking.method}`);
+    for (const image of ranking.ordered_images) {
+      console.log(
+        `#${image.position} ${image.file_name} :: ${image.predicted_view_type} :: overall ${Math.round(image.overall_score * 100)}`
+      );
+    }
+    return;
+  }
 
   const uploadPayload = await apiRequest<{
     files: Array<{ asset_id: string; file_name: string; upload_url: string; headers: Record<string, string> }>;
@@ -234,8 +283,8 @@ async function handleFeedback(tokens: string[]) {
   console.log(`Feedback recorded for ${rankingId}.`);
 }
 
-async function main() {
-  const [command, ...tokens] = process.argv.slice(2);
+export async function main(argv = process.argv.slice(2)) {
+  const [command, ...tokens] = argv;
 
   if (!command) {
     usage();
@@ -256,7 +305,9 @@ async function main() {
   }
 }
 
-void main().catch((error) => {
-  console.error(error instanceof Error ? error.message : "Unexpected CLI failure.");
-  process.exit(1);
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  void main().catch((error) => {
+    console.error(error instanceof Error ? error.message : "Unexpected CLI failure.");
+    process.exit(1);
+  });
+}
