@@ -25,6 +25,31 @@ const MAX_VISIBLE_THUMBS = 6;
 // Persists across client-side navigation within the same browser session
 let _cachedFiles: File[] = [];
 
+async function readErrorMessage(response: Response, fallback: string): Promise<string> {
+  const contentType = response.headers.get("content-type") ?? "";
+  if (contentType.includes("application/json")) {
+    try {
+      const payload = (await response.json()) as { error?: string };
+      if (typeof payload.error === "string" && payload.error.trim()) {
+        return payload.error;
+      }
+    } catch {
+      // Ignore parse failures and fall through to the generic fallback.
+    }
+  }
+
+  try {
+    const text = (await response.text()).trim();
+    if (text) {
+      return text;
+    }
+  } catch {
+    // Ignore body read failures and use the fallback below.
+  }
+
+  return fallback;
+}
+
 export function UploadForm() {
   const defaultTargetCount = 8;
   const router = useRouter();
@@ -77,7 +102,7 @@ export function UploadForm() {
       });
 
       if (!uploadResponse.ok) {
-        throw new Error((await uploadResponse.json()).error ?? "Failed to create upload targets.");
+        throw new Error(await readErrorMessage(uploadResponse, "Failed to create upload targets."));
       }
 
       const uploadPayload = (await uploadResponse.json()) as UploadResponse;
@@ -96,7 +121,7 @@ export function UploadForm() {
             body: file
           });
           if (!response.ok) {
-            throw new Error(`Failed to upload ${asset.file_name}.`);
+            throw new Error(await readErrorMessage(response, `Failed to upload ${asset.file_name}.`));
           }
         })
       );
@@ -117,7 +142,7 @@ export function UploadForm() {
       });
 
       if (!rankingResponse.ok) {
-        throw new Error((await rankingResponse.json()).error ?? "Failed to queue ranking job.");
+        throw new Error(await readErrorMessage(rankingResponse, "Failed to queue ranking job."));
       }
 
       const rankingPayload = (await rankingResponse.json()) as RankingResponse;

@@ -20,7 +20,7 @@ import {
   type RankingJob
 } from "./schemas";
 import { InngestJobScheduler, InlineJobScheduler, type JobScheduler } from "./scheduler";
-import { LocalStorageAdapter, S3StorageAdapter, type StorageAdapter } from "./storage";
+import { LocalStorageAdapter, PostgresStorageAdapter, S3StorageAdapter, type StorageAdapter } from "./storage";
 import { createId, getBaseUrl, nowIso, safeFileName } from "./utils";
 import { normalizeViewTags, normalizeViewType } from "./view-types";
 
@@ -43,6 +43,11 @@ type AppConfig = {
   llmProvider: RankingProvider;
   cvProvider: RankingProvider;
   inngest?: Inngest;
+};
+
+export type AppInfrastructure = {
+  repository: "memory" | "postgres";
+  storage: "local" | "postgres" | "s3";
 };
 
 declare global {
@@ -86,22 +91,48 @@ export function createInngestClient(): Inngest {
   });
 }
 
-function createRepository(): Repository {
-  if (process.env.DATABASE_URL) {
-    return new PostgresRepository(new Pool({ connectionString: process.env.DATABASE_URL }));
+export function resolveAppInfrastructure(env: NodeJS.ProcessEnv = process.env): AppInfrastructure {
+  const hasDatabase = Boolean(env.DATABASE_URL);
+  const hasS3 = env.STORAGE_PROVIDER === "s3" && Boolean(env.S3_BUCKET);
+
+  if (env.VERCEL && !hasDatabase) {
+    throw new Error(
+      "DATABASE_URL is required on Vercel. In-memory uploads and rankings do not work across serverless requests."
+    );
+  }
+
+  if (hasDatabase) {
+    return {
+      repository: "postgres",
+      storage: hasS3 ? "s3" : "postgres"
+    };
+  }
+
+  return {
+    repository: "memory",
+    storage: hasS3 ? "s3" : "local"
+  };
+}
+
+function createRepository(infrastructure: AppInfrastructure, pool?: Pool): Repository {
+  if (infrastructure.repository === "postgres" && pool) {
+    return new PostgresRepository(pool);
   }
   return new MemoryRepository();
 }
 
-function createStorage(): StorageAdapter {
-  if (process.env.STORAGE_PROVIDER === "s3" && process.env.S3_BUCKET) {
+function createStorage(infrastructure: AppInfrastructure, pool?: Pool): StorageAdapter {
+  if (infrastructure.storage === "s3") {
     return new S3StorageAdapter({
-      bucket: process.env.S3_BUCKET,
+      bucket: process.env.S3_BUCKET!,
       region: process.env.S3_REGION ?? "us-east-1",
       accessKeyId: process.env.S3_ACCESS_KEY_ID,
       secretAccessKey: process.env.S3_SECRET_ACCESS_KEY,
       endpoint: process.env.S3_ENDPOINT
     });
+  }
+  if (infrastructure.storage === "postgres" && pool) {
+    return new PostgresStorageAdapter(pool);
   }
   return new LocalStorageAdapter();
 }
@@ -307,8 +338,13 @@ export function createApp(config: AppConfig): AppServices {
 
 export function getApp(): AppServices {
   if (!globalThis.__listingPhotoRankerApp__) {
-    const repository = createRepository();
-    const storage = createStorage();
+    const infrastructure = resolveAppInfrastructure();
+    const pool =
+      infrastructure.repository === "postgres" || infrastructure.storage === "postgres"
+        ? new Pool({ connectionString: process.env.DATABASE_URL })
+        : undefined;
+    const repository = createRepository(infrastructure, pool);
+    const storage = createStorage(infrastructure, pool);
     const llmProvider = new HeuristicLlmJudgeProvider({
       modelVersion: process.env.LLM_JUDGE_MODEL ?? "gpt-5.4"
     });
