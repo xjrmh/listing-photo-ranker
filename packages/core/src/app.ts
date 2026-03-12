@@ -1,5 +1,5 @@
 import { Inngest } from "inngest";
-import { Pool } from "pg";
+import { Pool, type PoolConfig } from "pg";
 
 import { buildDuplicateGroups, buildRankingResult } from "./ranking-policy";
 import { HeuristicCvProvider, HeuristicLlmJudgeProvider, addDuplicateIssue, type RankingProvider } from "./providers";
@@ -67,6 +67,8 @@ declare global {
   var __listingPhotoRankerApp__: AppServices | undefined;
 }
 
+const DEFAULT_DATABASE_CONNECT_TIMEOUT_MS = 5_000;
+
 function mapUploadResponse(asset: AssetRecord, upload: { upload_url: string; upload_method: "PUT"; headers: Record<string, string>; expires_at: string }, baseUrl?: string) {
   return {
     asset_id: asset.asset_id,
@@ -128,6 +130,32 @@ export function resolveAppInfrastructure(env: NodeJS.ProcessEnv = process.env): 
   return {
     repository: "memory",
     storage: hasS3 ? "s3" : "local"
+  };
+}
+
+export function resolveDatabaseConnectTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
+  const rawValue = env.DATABASE_CONNECT_TIMEOUT_MS?.trim();
+  if (!rawValue) {
+    return DEFAULT_DATABASE_CONNECT_TIMEOUT_MS;
+  }
+
+  const parsed = Number.parseInt(rawValue, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_DATABASE_CONNECT_TIMEOUT_MS;
+  }
+
+  return parsed;
+}
+
+export function resolvePostgresPoolConfig(env: NodeJS.ProcessEnv = process.env): PoolConfig {
+  const connectionString = env.DATABASE_URL?.trim();
+  if (!connectionString) {
+    throw new Error("DATABASE_URL is required to initialize Postgres infrastructure.");
+  }
+
+  return {
+    connectionString,
+    connectionTimeoutMillis: resolveDatabaseConnectTimeoutMs(env)
   };
 }
 
@@ -410,7 +438,7 @@ export function getApp(): AppServices {
     const infrastructure = resolveAppInfrastructure();
     const pool =
       infrastructure.repository === "postgres" || infrastructure.storage === "postgres"
-        ? new Pool({ connectionString: process.env.DATABASE_URL })
+        ? new Pool(resolvePostgresPoolConfig())
         : undefined;
     const repository = createRepository(infrastructure, pool);
     const storage = createStorage(infrastructure, pool);

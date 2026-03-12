@@ -26,6 +26,9 @@ type RankingResponse = {
 };
 
 const MAX_VISIBLE_THUMBS = 6;
+const CONTROL_REQUEST_TIMEOUT_MS = 15_000;
+const DIRECT_UPLOAD_TIMEOUT_MS = 60_000;
+const SYNC_RANKING_TIMEOUT_MS = 60_000;
 
 // Persists across client-side navigation within the same browser session
 let _cachedFiles: File[] = [];
@@ -53,6 +56,30 @@ async function readErrorMessage(response: Response, fallback: string): Promise<s
   }
 
   return fallback;
+}
+
+async function fetchWithTimeout(
+  input: RequestInfo | URL,
+  init: RequestInit | undefined,
+  timeoutMs: number,
+  timeoutMessage: string
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = globalThis.setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(input, {
+      ...init,
+      signal: controller.signal
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error(timeoutMessage);
+    }
+    throw error;
+  } finally {
+    globalThis.clearTimeout(timeoutId);
+  }
 }
 
 function appendSyncRankingOptions(formData: FormData, options: ReturnType<typeof buildWebSyncRankingOptions>) {
@@ -142,10 +169,15 @@ export function UploadForm({ runtimeMode }: UploadFormProps) {
         files.forEach((file) => formData.append("files", file, file.name));
         appendSyncRankingOptions(formData, options);
 
-        const rankingResponse = await fetch("/api/v1/rankings/sync", {
-          method: "POST",
-          body: formData
-        });
+        const rankingResponse = await fetchWithTimeout(
+          "/api/v1/rankings/sync",
+          {
+            method: "POST",
+            body: formData
+          },
+          SYNC_RANKING_TIMEOUT_MS,
+          "Timed out while ranking photos. Check your server logs and runtime configuration."
+        );
 
         if (!rankingResponse.ok) {
           throw new Error(await readErrorMessage(rankingResponse, "Failed to rank uploaded files."));
@@ -165,17 +197,22 @@ export function UploadForm({ runtimeMode }: UploadFormProps) {
         setStatelessResult(result);
         setStatus("");
       } else {
-        const uploadResponse = await fetch("/api/v1/uploads", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            files: files.map((file) => ({
-              file_name: file.name,
-              content_type: file.type || "application/octet-stream",
-              size_bytes: file.size
-            }))
-          })
-        });
+        const uploadResponse = await fetchWithTimeout(
+          "/api/v1/uploads",
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              files: files.map((file) => ({
+                file_name: file.name,
+                content_type: file.type || "application/octet-stream",
+                size_bytes: file.size
+              }))
+            })
+          },
+          CONTROL_REQUEST_TIMEOUT_MS,
+          "Timed out while creating upload targets. Check DATABASE_URL, or set APP_RUNTIME_MODE=stateless for database-free deployments."
+        );
 
         if (!uploadResponse.ok) {
           throw new Error(await readErrorMessage(uploadResponse, "Failed to create upload targets."));
@@ -191,11 +228,16 @@ export function UploadForm({ runtimeMode }: UploadFormProps) {
             if (!headers.has("content-type")) {
               headers.set("content-type", file.type || "application/octet-stream");
             }
-            const response = await fetch(asset.upload_url, {
-              method: "PUT",
-              headers,
-              body: file
-            });
+            const response = await fetchWithTimeout(
+              asset.upload_url,
+              {
+                method: "PUT",
+                headers,
+                body: file
+              },
+              DIRECT_UPLOAD_TIMEOUT_MS,
+              `Timed out while uploading ${asset.file_name}.`
+            );
             if (!response.ok) {
               throw new Error(await readErrorMessage(response, `Failed to upload ${asset.file_name}.`));
             }
@@ -203,19 +245,24 @@ export function UploadForm({ runtimeMode }: UploadFormProps) {
         );
 
         setStatus("Queueing ranking job...");
-        const rankingResponse = await fetch("/api/v1/rankings", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(
-            buildWebRankingRequest({
-              method,
-              targetCount: Math.min(targetCount, files.length),
-              assetIds: uploadPayload.files.map((file) => file.asset_id),
-              propertyType,
-              policy: { preferExteriorHero, dedupe, requireRoomDiversity }
-            })
-          )
-        });
+        const rankingResponse = await fetchWithTimeout(
+          "/api/v1/rankings",
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(
+              buildWebRankingRequest({
+                method,
+                targetCount: Math.min(targetCount, files.length),
+                assetIds: uploadPayload.files.map((file) => file.asset_id),
+                propertyType,
+                policy: { preferExteriorHero, dedupe, requireRoomDiversity }
+              })
+            )
+          },
+          CONTROL_REQUEST_TIMEOUT_MS,
+          "Timed out while queueing the ranking job. Check DATABASE_URL and your queue configuration."
+        );
 
         if (!rankingResponse.ok) {
           throw new Error(await readErrorMessage(rankingResponse, "Failed to queue ranking job."));
@@ -234,7 +281,12 @@ export function UploadForm({ runtimeMode }: UploadFormProps) {
   }
 
   const remainingCount = Math.max(files.length - MAX_VISIBLE_THUMBS, 0);
-  const isError = status.toLowerCase().includes("failed") || status.toLowerCase().includes("error") || status.toLowerCase().includes("choose");
+  const normalizedStatus = status.toLowerCase();
+  const isError =
+    normalizedStatus.includes("failed") ||
+    normalizedStatus.includes("error") ||
+    normalizedStatus.includes("choose") ||
+    normalizedStatus.includes("timed out");
 
   return (
     <>

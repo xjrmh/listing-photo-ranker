@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { resolveAppInfrastructure, resolveAppRuntimeMode } from "@listing-photo-ranker/core";
+import { resolveAppInfrastructure, resolveAppRuntimeMode, resolvePostgresPoolConfig } from "@listing-photo-ranker/core";
 
 function env(values: Partial<NodeJS.ProcessEnv>): NodeJS.ProcessEnv {
   return {
@@ -22,6 +22,28 @@ test("app infrastructure uses Postgres-backed uploads when DATABASE_URL is set",
     repository: "postgres",
     storage: "postgres"
   });
+});
+
+test("postgres pool config uses a bounded default connect timeout", () => {
+  assert.deepEqual(resolvePostgresPoolConfig(env({ DATABASE_URL: "postgres://example" })), {
+    connectionString: "postgres://example",
+    connectionTimeoutMillis: 5000
+  });
+});
+
+test("postgres pool config respects DATABASE_CONNECT_TIMEOUT_MS", () => {
+  assert.deepEqual(
+    resolvePostgresPoolConfig(
+      env({
+        DATABASE_URL: "postgres://example",
+        DATABASE_CONNECT_TIMEOUT_MS: "1200"
+      })
+    ),
+    {
+      connectionString: "postgres://example",
+      connectionTimeoutMillis: 1200
+    }
+  );
 });
 
 test("app infrastructure prefers S3 storage when both DATABASE_URL and S3 are configured", () => {
