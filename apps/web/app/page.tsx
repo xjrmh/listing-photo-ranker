@@ -23,7 +23,7 @@ export default function HomePage() {
 
       <header className="page-hero">
         <h1 className="page-title">Rank listing photos with one click.</h1>
-        <p className="page-subtitle">Upload a gallery, run the ranker, review the sequence, and capture feedback.</p>
+        <p className="page-subtitle">Upload a gallery, run the ranker, review the sequence, and capture results.</p>
       </header>
 
       <section className="home-grid">
