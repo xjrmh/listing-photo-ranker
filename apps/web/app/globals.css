@@ -199,7 +199,10 @@ textarea {
   color: var(--muted-foreground);
   font-size: 1rem;
   line-height: 1.6;
-  white-space: nowrap;
+  max-width: 42rem;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
 }
 
 /* ── Cards ── */
