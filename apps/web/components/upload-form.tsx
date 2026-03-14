@@ -35,6 +35,64 @@ const MAX_VISIBLE_THUMBS = 6;
 const CONTROL_REQUEST_TIMEOUT_MS = 15_000;
 const DIRECT_UPLOAD_TIMEOUT_MS = 60_000;
 const SYNC_RANKING_TIMEOUT_MS = 60_000;
+const STATUS_ROTATION_INTERVAL_MS = 1_350;
+
+function getRotatingStatusFrames(status: string, runtimeMode: AppRuntimeMode): string[] {
+  const normalized = status.trim().toLowerCase();
+
+  if (!normalized) {
+    return [];
+  }
+
+  if (normalized.includes("optimizing")) {
+    return [
+      "Optimizing photos for upload...",
+      "Compressing large images...",
+      "Preparing a lighter ranking payload..."
+    ];
+  }
+
+  if (normalized.includes("ranking")) {
+    return runtimeMode === "stateless"
+      ? [
+          "Ranking photos...",
+          "Checking lighting, sharpness, and framing...",
+          "Comparing hero candidates...",
+          "Building the gallery order..."
+        ]
+      : [
+          "Preparing the ranking...",
+          "Comparing hero candidates...",
+          "Building the review workspace..."
+        ];
+  }
+
+  if (normalized.includes("creating upload")) {
+    return [
+      "Creating upload targets...",
+      "Preparing secure asset slots...",
+      "Staging the ranking request..."
+    ];
+  }
+
+  if (normalized.includes("uploading")) {
+    return [
+      "Uploading images...",
+      "Streaming source photos...",
+      "Verifying uploaded assets..."
+    ];
+  }
+
+  if (normalized.includes("queueing")) {
+    return [
+      "Queueing ranking job...",
+      "Packaging listing context...",
+      "Opening the review workspace..."
+    ];
+  }
+
+  return [status];
+}
 
 async function readErrorMessage(response: Response, fallback: string): Promise<string> {
   const contentType = response.headers.get("content-type") ?? "";
@@ -109,6 +167,7 @@ export function UploadForm({ runtimeMode }: UploadFormProps) {
   const [propertyType, setPropertyType] = useState<PropertyType>("other");
   const [status, setStatus] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [statusFrameIndex, setStatusFrameIndex] = useState(0);
   const prevUrlsRef = useRef<string[]>([]);
 
   // Generate object URLs for thumbnail previews, revoke old ones on change
@@ -121,6 +180,31 @@ export function UploadForm({ runtimeMode }: UploadFormProps) {
       urls.forEach((url) => URL.revokeObjectURL(url));
     };
   }, [files]);
+
+  const normalizedStatus = status.toLowerCase();
+  const isError =
+    normalizedStatus.includes("failed") ||
+    normalizedStatus.includes("error") ||
+    normalizedStatus.includes("choose") ||
+    normalizedStatus.includes("timed out");
+  const isAnimatedStatus = submitting && !isError && Boolean(status);
+  const rotatingStatusFrames = getRotatingStatusFrames(status, runtimeMode);
+
+  useEffect(() => {
+    if (!isAnimatedStatus || rotatingStatusFrames.length <= 1) {
+      setStatusFrameIndex(0);
+      return;
+    }
+
+    setStatusFrameIndex(0);
+    const intervalId = window.setInterval(() => {
+      setStatusFrameIndex((current) => (current + 1) % rotatingStatusFrames.length);
+    }, STATUS_ROTATION_INTERVAL_MS);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [isAnimatedStatus, rotatingStatusFrames.length, status]);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -256,12 +340,6 @@ export function UploadForm({ runtimeMode }: UploadFormProps) {
   }
 
   const remainingCount = Math.max(files.length - MAX_VISIBLE_THUMBS, 0);
-  const normalizedStatus = status.toLowerCase();
-  const isError =
-    normalizedStatus.includes("failed") ||
-    normalizedStatus.includes("error") ||
-    normalizedStatus.includes("choose") ||
-    normalizedStatus.includes("timed out");
 
   return (
     <>
@@ -393,9 +471,16 @@ export function UploadForm({ runtimeMode }: UploadFormProps) {
                 ? runtimeMode === "stateless" ? "Ranking..." : "Submitting..."
                 : runtimeMode === "stateless" ? "Rank now" : "Create ranking"}
             </button>
-            {status && (
+            {isAnimatedStatus ? (
+              <div className="status-rotator" role="status" aria-live="polite" aria-atomic="true">
+                <span className="status-spinner" aria-hidden="true" />
+                <span key={`${status}-${statusFrameIndex}`} className="status-rotating-copy">
+                  {rotatingStatusFrames[statusFrameIndex] ?? status}
+                </span>
+              </div>
+            ) : status ? (
               <p className={`status-text${isError ? " error" : ""}`}>{status}</p>
-            )}
+            ) : null}
           </div>
         </form>
       </section>

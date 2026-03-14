@@ -117,12 +117,12 @@ export function resolveLlmJudgeProviderMode(env: NodeJS.ProcessEnv = process.env
 export function resolveLlmJudgeStatelessMaxImages(env: NodeJS.ProcessEnv = process.env): number {
   const rawValue = env.LLM_JUDGE_STATELESS_MAX_IMAGES?.trim();
   if (!rawValue) {
-    return 12;
+    return 30;
   }
 
   const parsed = Number.parseInt(rawValue, 10);
   if (!Number.isFinite(parsed) || parsed <= 0) {
-    return 12;
+    return 30;
   }
 
   return parsed;

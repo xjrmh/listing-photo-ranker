@@ -67,6 +67,9 @@ test("ranking review workspace renders stateless export workflow", () => {
   assert.match(html, /blob:front/);
   assert.match(html, /Ready to export feedback JSON/);
   assert.match(html, /Action plan/);
+  assert.match(html, /Strengths/);
+  assert.match(html, /Weaknesses/);
+  assert.match(html, /Action Items/);
   assert.match(html, /Retake Advice/);
-  assert.match(html, /Open blinds before retaking interiors/);
+  assert.doesNotMatch(html, /Open blinds before retaking interiors/);
 });

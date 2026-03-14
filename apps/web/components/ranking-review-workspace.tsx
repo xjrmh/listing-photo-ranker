@@ -207,58 +207,31 @@ export function RankingReviewWorkspace({
 
         <div className="card action-plan-card">
           <div className="stack-sm">
-            <div>
-              <h3 className="section-title">Action plan</h3>
-              <p className="helper-text" style={{ marginTop: 4 }}>{result.gallery_feedback.summary}</p>
+            <h3 className="section-title">Action plan</h3>
+
+            <div className="summary-grid-compact">
+              <div className="summary-card">
+                <span className="summary-label">Strengths</span>
+                <strong style={{ fontSize: "1rem" }}>{result.gallery_feedback.strengths.length}</strong>
+                <p className="helper-text" style={{ marginTop: 8 }}>
+                  {result.gallery_feedback.strengths.slice(0, 2).join(" ")}
+                </p>
+              </div>
+              <div className="summary-card">
+                <span className="summary-label">Weaknesses</span>
+                <strong style={{ fontSize: "1rem" }}>{result.gallery_feedback.weaknesses.length}</strong>
+                <p className="helper-text" style={{ marginTop: 8 }}>
+                  {result.gallery_feedback.weaknesses.slice(0, 2).join(" ")}
+                </p>
+              </div>
+              <div className="summary-card">
+                <span className="summary-label">Action Items</span>
+                <strong style={{ fontSize: "1rem" }}>{result.gallery_feedback.actionable_items.length}</strong>
+                <p className="helper-text" style={{ marginTop: 8 }}>
+                  Prioritized coaching generated from the selected gallery.
+                </p>
+              </div>
             </div>
-
-            {result.gallery_feedback.actionable_items.length > 0 ? (
-              <div className="action-list">
-                {result.gallery_feedback.actionable_items.map((item) => (
-                  <article key={`${item.title}-${item.how_to_fix}`} className="action-item">
-                    <div className="action-item-topline">
-                      <strong>{item.title}</strong>
-                      <span className="badge badge-secondary">{formatPriority(item.priority)}</span>
-                    </div>
-                    <p className="helper-text">{item.why}</p>
-                    <p className="action-item-fix">{item.how_to_fix}</p>
-                    {item.affected_image_ids.length > 0 ? (
-                      <div className="badge-row">
-                        {item.affected_image_ids.slice(0, 4).map((imageId) => (
-                          <span key={imageId} className="badge badge-outline">{imageId}</span>
-                        ))}
-                      </div>
-                    ) : null}
-                  </article>
-                ))}
-              </div>
-            ) : null}
-
-            {(result.gallery_feedback.strengths.length > 0 || result.gallery_feedback.weaknesses.length > 0) ? (
-              <div className="summary-grid-compact">
-                <div className="summary-card">
-                  <span className="summary-label">Strengths</span>
-                  <strong style={{ fontSize: "1rem" }}>{result.gallery_feedback.strengths.length}</strong>
-                  <p className="helper-text" style={{ marginTop: 8 }}>
-                    {result.gallery_feedback.strengths.slice(0, 2).join(" ")}
-                  </p>
-                </div>
-                <div className="summary-card">
-                  <span className="summary-label">Weaknesses</span>
-                  <strong style={{ fontSize: "1rem" }}>{result.gallery_feedback.weaknesses.length}</strong>
-                  <p className="helper-text" style={{ marginTop: 8 }}>
-                    {result.gallery_feedback.weaknesses.slice(0, 2).join(" ")}
-                  </p>
-                </div>
-                <div className="summary-card">
-                  <span className="summary-label">Action Items</span>
-                  <strong style={{ fontSize: "1rem" }}>{result.gallery_feedback.actionable_items.length}</strong>
-                  <p className="helper-text" style={{ marginTop: 8 }}>
-                    Prioritized coaching generated from the selected gallery.
-                  </p>
-                </div>
-              </div>
-            ) : null}
           </div>
         </div>
       </section>
