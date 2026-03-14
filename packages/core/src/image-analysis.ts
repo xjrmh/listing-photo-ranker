@@ -1,8 +1,6 @@
-import { Jimp } from "jimp";
+import sharp from "sharp";
 
 import { clamp } from "./utils";
-
-type JimpImage = Awaited<ReturnType<typeof Jimp.read>>;
 
 export type ImageAnalysis = {
   width: number;
@@ -21,19 +19,40 @@ export type ImageAnalysis = {
   perceptualHash: string;
 };
 
+type DecodedImage = {
+  width: number;
+  height: number;
+  channels: number;
+  data: Buffer;
+};
+
 function computeLuminance(red: number, green: number, blue: number): number {
   return (0.2126 * red + 0.7152 * green + 0.0722 * blue) / 255;
 }
 
-function buildDHash(image: JimpImage): string {
-  const resized = image.clone().greyscale().resize({ w: 9, h: 8 });
-  const data = resized.bitmap.data;
+async function decodeImage(buffer: Buffer): Promise<DecodedImage> {
+  const { data, info } = await sharp(buffer).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+
+  return {
+    width: info.width,
+    height: info.height,
+    channels: info.channels,
+    data
+  };
+}
+
+async function buildDHash(buffer: Buffer): Promise<string> {
+  const { data, info } = await sharp(buffer)
+    .greyscale()
+    .resize({ width: 9, height: 8, fit: "fill" })
+    .raw()
+    .toBuffer({ resolveWithObject: true });
   let output = "";
 
   for (let y = 0; y < 8; y += 1) {
     for (let x = 0; x < 8; x += 1) {
-      const leftIndex = (y * 9 + x) * 4;
-      const rightIndex = (y * 9 + x + 1) * 4;
+      const leftIndex = (y * info.width + x) * info.channels;
+      const rightIndex = (y * info.width + x + 1) * info.channels;
       output += data[leftIndex] > data[rightIndex] ? "1" : "0";
     }
   }
@@ -42,8 +61,8 @@ function buildDHash(image: JimpImage): string {
 }
 
 export async function analyzeImageBuffer(buffer: Buffer): Promise<ImageAnalysis> {
-  const image = await Jimp.read(buffer);
-  const { width, height, data } = image.bitmap;
+  const [image, perceptualHash] = await Promise.all([decodeImage(buffer), buildDHash(buffer)]);
+  const { width, height, data, channels } = image;
 
   const totalPixels = width * height;
   let luminanceSum = 0;
@@ -59,7 +78,7 @@ export async function analyzeImageBuffer(buffer: Buffer): Promise<ImageAnalysis>
   const grayscale = new Float32Array(totalPixels);
 
   for (let pixelIndex = 0; pixelIndex < totalPixels; pixelIndex += 1) {
-    const byteIndex = pixelIndex * 4;
+    const byteIndex = pixelIndex * channels;
     const red = data[byteIndex] ?? 0;
     const green = data[byteIndex + 1] ?? 0;
     const blue = data[byteIndex + 2] ?? 0;
@@ -137,6 +156,6 @@ export async function analyzeImageBuffer(buffer: Buffer): Promise<ImageAnalysis>
     clippingBalance,
     colorfulness,
     dominantHue,
-    perceptualHash: buildDHash(image)
+    perceptualHash
   };
 }
