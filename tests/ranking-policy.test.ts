@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { buildRankingResult, type ProviderAssessment } from "@listing-photo-ranker/core";
+import { createTestImprovementActions, createTestPhotoCriteria } from "./helpers";
 
 function assessment(overrides: Partial<ProviderAssessment>): ProviderAssessment {
   return {
@@ -15,8 +16,10 @@ function assessment(overrides: Partial<ProviderAssessment>): ProviderAssessment 
     technicalQualityScore: overrides.technicalQualityScore ?? 0.6,
     predictedViewType: overrides.predictedViewType ?? "other",
     viewTags: overrides.viewTags ?? [],
+    criteria: overrides.criteria ?? createTestPhotoCriteria(),
     sceneConfidence: overrides.sceneConfidence ?? 0.8,
     issues: overrides.issues ?? [],
+    improvementActions: overrides.improvementActions ?? createTestImprovementActions(),
     confidence: overrides.confidence ?? 0.7,
     rationale: overrides.rationale ?? "Test rationale",
     perceptualHash: overrides.perceptualHash ?? "1010101010101010"

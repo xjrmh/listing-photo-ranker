@@ -4,7 +4,13 @@ import React from "react";
 import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 
-import { VIEW_TYPES, type FeedbackRequest, type RankedPhoto, type RankingResult } from "@listing-photo-ranker/core/client";
+import {
+  VIEW_TYPES,
+  type FeedbackRequest,
+  type PhotoCriteria,
+  type RankedPhoto,
+  type RankingResult
+} from "@listing-photo-ranker/core/client";
 
 type EditablePhoto = RankedPhoto & {
   edited_view_type: string;
@@ -33,6 +39,21 @@ function formatLabel(value: string): string {
 function formatScore(value: number): string {
   return `${Math.round(value * 100)}%`;
 }
+
+function formatPriority(value: string): string {
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+const CRITERIA_ORDER: Array<keyof PhotoCriteria> = [
+  "lighting_exposure",
+  "sharpness_clarity",
+  "perspective_straightness",
+  "composition_framing",
+  "space_representation",
+  "declutter_staging",
+  "feature_highlighting",
+  "hero_potential"
+];
 
 function reorder<T extends { position: number }>(items: T[], fromIndex: number, toIndex: number): T[] {
   const next = [...items];
@@ -183,6 +204,63 @@ export function RankingReviewWorkspace({
             ))}
           </div>
         ) : null}
+
+        <div className="card action-plan-card">
+          <div className="stack-sm">
+            <div>
+              <h3 className="section-title">Action plan</h3>
+              <p className="helper-text" style={{ marginTop: 4 }}>{result.gallery_feedback.summary}</p>
+            </div>
+
+            {result.gallery_feedback.actionable_items.length > 0 ? (
+              <div className="action-list">
+                {result.gallery_feedback.actionable_items.map((item) => (
+                  <article key={`${item.title}-${item.how_to_fix}`} className="action-item">
+                    <div className="action-item-topline">
+                      <strong>{item.title}</strong>
+                      <span className="badge badge-secondary">{formatPriority(item.priority)}</span>
+                    </div>
+                    <p className="helper-text">{item.why}</p>
+                    <p className="action-item-fix">{item.how_to_fix}</p>
+                    {item.affected_image_ids.length > 0 ? (
+                      <div className="badge-row">
+                        {item.affected_image_ids.slice(0, 4).map((imageId) => (
+                          <span key={imageId} className="badge badge-outline">{imageId}</span>
+                        ))}
+                      </div>
+                    ) : null}
+                  </article>
+                ))}
+              </div>
+            ) : null}
+
+            {(result.gallery_feedback.strengths.length > 0 || result.gallery_feedback.weaknesses.length > 0) ? (
+              <div className="summary-grid-compact">
+                <div className="summary-card">
+                  <span className="summary-label">Strengths</span>
+                  <strong style={{ fontSize: "1rem" }}>{result.gallery_feedback.strengths.length}</strong>
+                  <p className="helper-text" style={{ marginTop: 8 }}>
+                    {result.gallery_feedback.strengths.slice(0, 2).join(" ")}
+                  </p>
+                </div>
+                <div className="summary-card">
+                  <span className="summary-label">Weaknesses</span>
+                  <strong style={{ fontSize: "1rem" }}>{result.gallery_feedback.weaknesses.length}</strong>
+                  <p className="helper-text" style={{ marginTop: 8 }}>
+                    {result.gallery_feedback.weaknesses.slice(0, 2).join(" ")}
+                  </p>
+                </div>
+                <div className="summary-card">
+                  <span className="summary-label">Action Items</span>
+                  <strong style={{ fontSize: "1rem" }}>{result.gallery_feedback.actionable_items.length}</strong>
+                  <p className="helper-text" style={{ marginTop: 8 }}>
+                    Prioritized coaching generated from the selected gallery.
+                  </p>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </div>
       </section>
 
       <section className="review-layout">
@@ -262,6 +340,37 @@ export function RankingReviewWorkspace({
                     <span>Hero <strong>{formatScore(selectedPhoto.hero_score)}</strong></span>
                     <span>Technical <strong>{formatScore(selectedPhoto.technical_quality_score)}</strong></span>
                   </div>
+                </div>
+
+                <div className="editor-section">
+                  <h4 className="editor-section-title">Criteria</h4>
+                  <div className="criteria-grid">
+                    {CRITERIA_ORDER.map((criterion) => (
+                      <div key={criterion} className="criteria-row">
+                        <span>{formatLabel(criterion)}</span>
+                        <strong>{formatScore(selectedPhoto.criteria[criterion])}</strong>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="editor-section">
+                  <h4 className="editor-section-title">Retake Advice</h4>
+                  {selectedPhoto.improvement_actions.length > 0 ? (
+                    <div className="action-list action-list-compact">
+                      {selectedPhoto.improvement_actions.map((item) => (
+                        <article key={`${item.issue}-${item.action}`} className="action-item">
+                          <div className="action-item-topline">
+                            <strong>{formatLabel(item.issue)}</strong>
+                            <span className="badge badge-secondary">{formatPriority(item.priority)}</span>
+                          </div>
+                          <p className="action-item-fix">{item.action}</p>
+                        </article>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="helper-text">No immediate retake actions were generated for this image.</p>
+                  )}
                 </div>
 
                 <div className="editor-section">

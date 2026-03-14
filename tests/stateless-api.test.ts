@@ -17,6 +17,7 @@ function resetServerGlobals() {
 function env(values: Partial<NodeJS.ProcessEnv>): NodeJS.ProcessEnv {
   return {
     NODE_ENV: "test",
+    LLM_JUDGE_PROVIDER: "heuristic",
     ...values
   } as NodeJS.ProcessEnv;
 }
@@ -61,6 +62,32 @@ test("sync ranking endpoint accepts multipart uploads in stateless mode", async 
     const payload = await response.json();
     assert.equal(payload.ordered_images.length, 2);
     assert.equal(payload.ordered_images[0].image_id, "sync_1");
+  });
+});
+
+test("sync ranking endpoint rejects oversized llm judge galleries in stateless openai mode", async () => {
+  await withEnv(env({ APP_RUNTIME_MODE: "stateless", LLM_JUDGE_PROVIDER: "openai", LLM_JUDGE_STATELESS_MAX_IMAGES: "2" }), async () => {
+    const front = await createSolidImageBuffer({ r: 120, g: 170, b: 120 }, { width: 112, height: 72, striped: true });
+    const kitchen = await createSolidImageBuffer({ r: 188, g: 165, b: 140 }, { striped: true });
+    const bath = await createSolidImageBuffer({ r: 220, g: 220, b: 228 });
+    const formData = new FormData();
+    formData.append("files", new File([new Uint8Array(front)], "front-exterior.png", { type: "image/png" }));
+    formData.append("files", new File([new Uint8Array(kitchen)], "kitchen.png", { type: "image/png" }));
+    formData.append("files", new File([new Uint8Array(bath)], "bathroom.png", { type: "image/png" }));
+    formData.append("method", "llm_judge");
+    formData.append("target_count", "3");
+    formData.append("property_type", "single_family");
+
+    const response = await createSyncRankingPost(
+      new Request("http://127.0.0.1:3000/api/v1/rankings/sync", {
+        method: "POST",
+        body: formData
+      })
+    );
+
+    assert.equal(response.status, 409);
+    const payload = await response.json();
+    assert.match(payload.error, /supports up to 2 images/i);
   });
 });
 

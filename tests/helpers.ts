@@ -1,4 +1,5 @@
 import { Jimp } from "jimp";
+import type { GalleryFeedback, PhotoCriteria, PhotoImprovementAction } from "@listing-photo-ranker/core";
 
 function rgbaToInt(red: number, green: number, blue: number, alpha: number): number {
   return (((red & 0xff) << 24) | ((green & 0xff) << 16) | ((blue & 0xff) << 8) | (alpha & 0xff)) >>> 0;
@@ -37,4 +38,38 @@ export async function waitFor(check: () => Promise<boolean>, timeoutMs = 2000): 
     await new Promise((resolve) => setTimeout(resolve, 30));
   }
   throw new Error("Condition was not met before timeout.");
+}
+
+export function createTestPhotoCriteria(overrides: Partial<PhotoCriteria> = {}): PhotoCriteria {
+  return {
+    lighting_exposure: overrides.lighting_exposure ?? 0.82,
+    sharpness_clarity: overrides.sharpness_clarity ?? 0.84,
+    perspective_straightness: overrides.perspective_straightness ?? 0.8,
+    composition_framing: overrides.composition_framing ?? 0.79,
+    space_representation: overrides.space_representation ?? 0.81,
+    declutter_staging: overrides.declutter_staging ?? 0.78,
+    feature_highlighting: overrides.feature_highlighting ?? 0.8,
+    hero_potential: overrides.hero_potential ?? 0.83
+  };
+}
+
+export function createTestImprovementActions(overrides: Partial<PhotoImprovementAction>[] = []): PhotoImprovementAction[] {
+  if (overrides.length === 0) {
+    return [];
+  }
+
+  return overrides.map((override) => ({
+    issue: override.issue ?? "low_contrast",
+    priority: override.priority ?? "medium",
+    action: override.action ?? "Open blinds and rebalance the light before retaking this angle."
+  }));
+}
+
+export function createTestGalleryFeedback(overrides: Partial<GalleryFeedback> = {}): GalleryFeedback {
+  return {
+    summary: overrides.summary ?? "The gallery has a usable lead image and a short action list for improvement.",
+    strengths: overrides.strengths ?? ["Front exterior coverage reads clearly."],
+    weaknesses: overrides.weaknesses ?? ["A few images could use cleaner composition."],
+    actionable_items: overrides.actionable_items ?? []
+  };
 }

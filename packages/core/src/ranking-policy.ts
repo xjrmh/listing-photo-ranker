@@ -1,5 +1,5 @@
 import type { ProviderAssessment } from "./providers";
-import type { ListingContext, PropertyType, RankingMethod, RankingPolicy, RankedPhoto, RankingResult } from "./schemas";
+import type { GalleryFeedback, GalleryActionableItem, ListingContext, PropertyType, RankingMethod, RankingPolicy, RankedPhoto, RankingResult } from "./schemas";
 import { clamp, hammingDistance } from "./utils";
 import type { ViewType } from "./view-types";
 
@@ -119,6 +119,10 @@ type SequenceGroup = (typeof CORE_SEQUENCE_GROUPS)[number] | "bathroom" | "secon
 
 function assessmentScore(assessment: ProviderAssessment): number {
   return assessment.overallScore + assessment.technicalQualityScore * 0.18 + assessment.heroScore * 0.18 + assessment.sceneConfidence * 0.08;
+}
+
+function formatLabel(value: string): string {
+  return value.replace(/_/g, " ");
 }
 
 function getPositionPrior(propertyType: PropertyType, viewType: ViewType): number {
@@ -399,6 +403,7 @@ export function buildRankingResult(input: {
   targetCount: number;
   providerName: string;
   modelVersion: string;
+  galleryFeedback?: GalleryFeedback;
 }): RankingResult {
   const { duplicateGroups, clusterIdByAsset } = buildDuplicateClusterLookup(input.assessments);
   const surfacedPositions = getSurfacedPositions(input.targetCount);
@@ -471,7 +476,9 @@ export function buildRankingResult(input: {
     technical_quality_score: clamp(assessment.technicalQualityScore),
     predicted_view_type: assessment.predictedViewType,
     view_tags: assessment.viewTags,
+    criteria: assessment.criteria,
     issues: assessment.issues,
+    improvement_actions: assessment.improvementActions,
     confidence: clamp(assessment.confidence),
     rationale: assessment.rationale
   }));
@@ -479,6 +486,14 @@ export function buildRankingResult(input: {
   const missingCoverage = COVERAGE_EXPECTATIONS_BY_PROPERTY[input.listingContext.property_type].filter(
     (viewType) => !ordered.some((assessment) => fulfillsCoverageExpectation(viewType, assessment.predictedViewType))
   );
+
+  const galleryFeedback = buildGalleryFeedback({
+    orderedImages,
+    orderedAssessments: ordered,
+    missingCoverage,
+    duplicateGroups,
+    providerFeedback: input.galleryFeedback
+  });
 
   return {
     ordered_images: orderedImages,
@@ -488,9 +503,120 @@ export function buildRankingResult(input: {
       source_asset_count: input.assessments.length,
       selected_asset_count: orderedImages.length
     },
+    gallery_feedback: galleryFeedback,
     method: input.method,
     provider_name: input.providerName,
     model_version: input.modelVersion,
     feedback_allowed: true
   };
+}
+
+function buildGalleryFeedback(input: {
+  orderedImages: RankedPhoto[];
+  orderedAssessments: ProviderAssessment[];
+  missingCoverage: ViewType[];
+  duplicateGroups: string[][];
+  providerFeedback?: GalleryFeedback;
+}): GalleryFeedback {
+  const providerFeedback = input.providerFeedback;
+  const strengths = providerFeedback?.strengths?.slice(0, 6) ?? [];
+  const weaknesses = providerFeedback?.weaknesses?.slice(0, 6) ?? [];
+  const actionableItems: GalleryActionableItem[] = [...(providerFeedback?.actionable_items ?? [])];
+  const orderedImageIds = new Set(input.orderedImages.map((image) => image.image_id));
+
+  if (input.missingCoverage.length > 0) {
+    actionableItems.push({
+      title: "Add missing coverage",
+      priority: "high",
+      why: `The selected gallery is missing ${input.missingCoverage.map((viewType) => formatLabel(viewType)).join(", ")}.`,
+      how_to_fix: `Retake or add clear, bright coverage of ${input.missingCoverage.map((viewType) => formatLabel(viewType)).join(", ")} before publishing.`,
+      affected_image_ids: []
+    });
+  }
+
+  const duplicateIds = input.duplicateGroups.flat().filter((imageId) => orderedImageIds.has(imageId));
+  if (duplicateIds.length > 0) {
+    actionableItems.push({
+      title: "Replace redundant angles",
+      priority: "medium",
+      why: "The selected set still contains near-duplicate coverage that weakens gallery variety.",
+      how_to_fix: "Keep the strongest angle from each repeated scene and replace the rest with materially different rooms or features.",
+      affected_image_ids: uniqueIds(duplicateIds)
+    });
+  }
+
+  const issueGroups = new Map<string, { count: number; imageIds: string[]; priority: GalleryActionableItem["priority"]; action: string }>();
+  for (const assessment of input.orderedAssessments) {
+    for (const action of assessment.improvementActions) {
+      if (action.issue === "duplicate_candidate") {
+        continue;
+      }
+      const current = issueGroups.get(action.issue) ?? {
+        count: 0,
+        imageIds: [],
+        priority: action.priority,
+        action: action.action
+      };
+      current.count += 1;
+      current.imageIds.push(assessment.assetId);
+      issueGroups.set(action.issue, current);
+    }
+  }
+
+  const repeatedIssues = [...issueGroups.entries()]
+    .filter(([, group]) => group.count >= 2)
+    .sort((left, right) => right[1].count - left[1].count)
+    .slice(0, 3);
+
+  for (const [issue, group] of repeatedIssues) {
+    actionableItems.push({
+      title: `${formatLabel(issue)} appears repeatedly`,
+      priority: group.priority,
+      why: `This issue affects ${group.count} selected photo${group.count === 1 ? "" : "s"} and is likely lowering perceived quality.`,
+      how_to_fix: group.action,
+      affected_image_ids: uniqueIds(group.imageIds)
+    });
+  }
+
+  const dedupedItems = dedupeActionableItems(actionableItems).slice(0, 6);
+  const fallbackStrengths =
+    strengths.length > 0
+      ? strengths
+      : input.orderedImages.slice(0, 3).map((image) => `${formatLabel(image.predicted_view_type)} coverage is helping the gallery read clearly.`);
+  const fallbackWeaknesses =
+    weaknesses.length > 0
+      ? weaknesses
+      : dedupedItems.slice(0, 3).map((item) => item.title);
+
+  return {
+    summary:
+      providerFeedback?.summary?.trim() ||
+      `Selected ${input.orderedImages.length} photo${input.orderedImages.length === 1 ? "" : "s"} with ${input.duplicateGroups.length} duplicate group${input.duplicateGroups.length === 1 ? "" : "s"} and ${input.missingCoverage.length} coverage gap${input.missingCoverage.length === 1 ? "" : "s"}.`,
+    strengths: fallbackStrengths.slice(0, 6),
+    weaknesses: fallbackWeaknesses.slice(0, 6),
+    actionable_items: dedupedItems
+  };
+}
+
+function uniqueIds(ids: string[]): string[] {
+  return [...new Set(ids)].slice(0, 50);
+}
+
+function dedupeActionableItems(items: GalleryActionableItem[]): GalleryActionableItem[] {
+  const seen = new Set<string>();
+  const deduped: GalleryActionableItem[] = [];
+
+  for (const item of items) {
+    const key = `${item.title}:${item.how_to_fix}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    deduped.push({
+      ...item,
+      affected_image_ids: uniqueIds(item.affected_image_ids)
+    });
+  }
+
+  return deduped;
 }

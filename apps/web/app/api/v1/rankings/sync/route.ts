@@ -1,4 +1,10 @@
-import { CreateSyncRankingOptionsSchema, CreateUploadRequestSchema, inferContentType } from "@listing-photo-ranker/core";
+import {
+  CreateSyncRankingOptionsSchema,
+  CreateUploadRequestSchema,
+  inferContentType,
+  resolveLlmJudgeProviderMode,
+  resolveLlmJudgeStatelessMaxImages
+} from "@listing-photo-ranker/core";
 
 import { checkApiKey, getServerApp, jsonError } from "../../../../../lib/http";
 
@@ -54,6 +60,16 @@ export async function POST(request: Request): Promise<Response> {
         require_room_diversity: parseBoolean(formData.get("require_room_diversity"))
       }
     });
+
+    if (options.method === "llm_judge" && resolveLlmJudgeProviderMode() === "openai") {
+      const maxImages = resolveLlmJudgeStatelessMaxImages();
+      if (files.length > maxImages) {
+        return jsonError(
+          `Stateless llm_judge supports up to ${maxImages} images when LLM_JUDGE_PROVIDER=openai. Choose fewer photos, use method=cv, or run in stateful mode.`,
+          409
+        );
+      }
+    }
 
     const payload = await Promise.all(
       files.map(async (file) => ({

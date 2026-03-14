@@ -23,8 +23,57 @@ export const IssueSchema = z.enum([
   "blurry",
   "possible_perspective_distortion",
   "low_contrast",
-  "duplicate_candidate"
+  "duplicate_candidate",
+  "cropped_room_or_feature",
+  "clutter_or_personal_items",
+  "mirror_or_reflection_distraction",
+  "screen_or_ceiling_fan_distraction",
+  "bathroom_prep_issue",
+  "people_or_pets",
+  "watermark_or_text_overlay",
+  "overedited",
+  "redundant_angle"
 ]);
+export type Issue = z.infer<typeof IssueSchema>;
+
+export const ActionPrioritySchema = z.enum(["high", "medium", "low"]);
+export type ActionPriority = z.infer<typeof ActionPrioritySchema>;
+
+export const PhotoCriteriaSchema = z.object({
+  lighting_exposure: z.number().min(0).max(1),
+  sharpness_clarity: z.number().min(0).max(1),
+  perspective_straightness: z.number().min(0).max(1),
+  composition_framing: z.number().min(0).max(1),
+  space_representation: z.number().min(0).max(1),
+  declutter_staging: z.number().min(0).max(1),
+  feature_highlighting: z.number().min(0).max(1),
+  hero_potential: z.number().min(0).max(1)
+});
+export type PhotoCriteria = z.infer<typeof PhotoCriteriaSchema>;
+
+export const PhotoImprovementActionSchema = z.object({
+  issue: IssueSchema,
+  priority: ActionPrioritySchema,
+  action: z.string().min(1).max(240)
+});
+export type PhotoImprovementAction = z.infer<typeof PhotoImprovementActionSchema>;
+
+export const GalleryActionableItemSchema = z.object({
+  title: z.string().min(1).max(120),
+  priority: ActionPrioritySchema,
+  why: z.string().min(1).max(300),
+  how_to_fix: z.string().min(1).max(400),
+  affected_image_ids: z.array(z.string()).max(50)
+});
+export type GalleryActionableItem = z.infer<typeof GalleryActionableItemSchema>;
+
+export const GalleryFeedbackSchema = z.object({
+  summary: z.string().min(1).max(500),
+  strengths: z.array(z.string().min(1).max(180)).max(6),
+  weaknesses: z.array(z.string().min(1).max(180)).max(6),
+  actionable_items: z.array(GalleryActionableItemSchema).max(6)
+});
+export type GalleryFeedback = z.infer<typeof GalleryFeedbackSchema>;
 
 export const RankingPolicySchema = z.object({
   prefer_exterior_hero: z.boolean().default(true),
@@ -69,7 +118,9 @@ export const RankedPhotoSchema = z.object({
   technical_quality_score: z.number().min(0).max(1),
   predicted_view_type: ViewTypeSchema,
   view_tags: z.array(z.string()).max(5),
+  criteria: PhotoCriteriaSchema,
   issues: z.array(IssueSchema),
+  improvement_actions: z.array(PhotoImprovementActionSchema).max(3),
   confidence: z.number().min(0).max(1),
   rationale: z.string(),
   preview_url: z.string().url().optional()
@@ -86,6 +137,7 @@ export const RankingDiagnosticsSchema = z.object({
 export const RankingResultSchema = z.object({
   ordered_images: z.array(RankedPhotoSchema),
   diagnostics: RankingDiagnosticsSchema,
+  gallery_feedback: GalleryFeedbackSchema,
   method: RankingMethodSchema,
   provider_name: z.string(),
   model_version: z.string(),

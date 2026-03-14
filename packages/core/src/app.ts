@@ -2,7 +2,7 @@ import { Inngest } from "inngest";
 import { Pool, type PoolConfig } from "pg";
 
 import { buildDuplicateGroups, buildRankingResult } from "./ranking-policy";
-import { HeuristicCvProvider, HeuristicLlmJudgeProvider, addDuplicateIssue, type RankingProvider } from "./providers";
+import { HeuristicCvProvider, HeuristicLlmJudgeProvider, OpenAiLlmJudgeProvider, addDuplicateIssue, type RankingProvider } from "./providers";
 import { MemoryRepository, PostgresRepository, type Repository } from "./repository";
 import {
   AssetRecordSchema,
@@ -55,6 +55,7 @@ export type AppInfrastructure = {
 };
 
 export type AppRuntimeMode = "stateful" | "stateless";
+export type LlmJudgeProviderMode = "openai" | "heuristic";
 
 export type SyncRankingFile = {
   file_name: string;
@@ -109,6 +110,24 @@ export function resolveAppRuntimeMode(env: NodeJS.ProcessEnv = process.env): App
   return env.APP_RUNTIME_MODE === "stateless" ? "stateless" : "stateful";
 }
 
+export function resolveLlmJudgeProviderMode(env: NodeJS.ProcessEnv = process.env): LlmJudgeProviderMode {
+  return env.LLM_JUDGE_PROVIDER === "heuristic" ? "heuristic" : "openai";
+}
+
+export function resolveLlmJudgeStatelessMaxImages(env: NodeJS.ProcessEnv = process.env): number {
+  const rawValue = env.LLM_JUDGE_STATELESS_MAX_IMAGES?.trim();
+  if (!rawValue) {
+    return 12;
+  }
+
+  const parsed = Number.parseInt(rawValue, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return 12;
+  }
+
+  return parsed;
+}
+
 export function resolveAppInfrastructure(env: NodeJS.ProcessEnv = process.env): AppInfrastructure {
   const runtimeMode = resolveAppRuntimeMode(env);
   const hasDatabase = Boolean(env.DATABASE_URL);
@@ -160,10 +179,17 @@ export function resolvePostgresPoolConfig(env: NodeJS.ProcessEnv = process.env):
 }
 
 function createProviders() {
+  const providerMode = resolveLlmJudgeProviderMode();
   return {
-    llmProvider: new HeuristicLlmJudgeProvider({
-      modelVersion: process.env.LLM_JUDGE_MODEL ?? "gpt-5.4"
-    }),
+    llmProvider:
+      providerMode === "heuristic"
+        ? new HeuristicLlmJudgeProvider({
+            modelVersion: process.env.LLM_JUDGE_MODEL ?? "gpt-5.4"
+          })
+        : new OpenAiLlmJudgeProvider({
+            modelVersion: process.env.LLM_JUDGE_MODEL ?? "gpt-5.4",
+            apiKey: process.env.API_KEY ?? process.env.OPENAI_API_KEY
+          }),
     cvProvider: new HeuristicCvProvider()
   };
 }
@@ -198,16 +224,19 @@ export function createApp(config: AppConfig): AppServices {
   ): Promise<RankingResult> {
     const parsed = CreateSyncRankingOptionsSchema.parse(request);
     const provider = (parsed.method === "llm_judge" ? config.llmProvider : config.cvProvider) as RankingProvider;
-    const rawAssessments = await provider.analyze(providerInputs);
-    const duplicateGroups = buildDuplicateGroups(rawAssessments);
+    const analysis = await provider.analyze(providerInputs, {
+      listingContext: parsed.listing_context
+    });
+    const duplicateGroups = buildDuplicateGroups(analysis.assessments);
     return buildRankingResult({
-      assessments: addDuplicateIssue(rawAssessments, duplicateGroups),
+      assessments: addDuplicateIssue(analysis.assessments, duplicateGroups),
       method: parsed.method,
       listingContext: parsed.listing_context,
       policy: parsed.policy,
       targetCount: parsed.target_count,
       providerName: provider.providerName,
-      modelVersion: provider.modelVersion
+      modelVersion: provider.modelVersion,
+      galleryFeedback: analysis.galleryFeedback
     });
   }
 

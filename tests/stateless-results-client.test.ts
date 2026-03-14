@@ -11,6 +11,7 @@ import {
   getStatelessRankingSession,
   setStatelessRankingSession
 } from "../apps/web/lib/stateless-ranking-session";
+import { createTestGalleryFeedback, createTestPhotoCriteria } from "./helpers";
 
 const RESULT: RankingResult = {
   ordered_images: [
@@ -23,7 +24,9 @@ const RESULT: RankingResult = {
       technical_quality_score: 0.86,
       predicted_view_type: "front_exterior",
       view_tags: ["greenery"],
+      criteria: createTestPhotoCriteria(),
       issues: [],
+      improvement_actions: [],
       confidence: 0.84,
       rationale: "Strong exterior lead."
     }
@@ -34,6 +37,7 @@ const RESULT: RankingResult = {
     source_asset_count: 1,
     selected_asset_count: 1
   },
+  gallery_feedback: createTestGalleryFeedback(),
   method: "llm_judge" as const,
   provider_name: "heuristic-llm-judge",
   model_version: "gpt-5.4",

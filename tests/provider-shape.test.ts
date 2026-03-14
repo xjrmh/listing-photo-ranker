@@ -19,8 +19,14 @@ test("cv and llm providers produce the same result shape", async () => {
     uploaded_at: new Date().toISOString()
   };
 
-  const [cvResult] = await new HeuristicCvProvider().analyze([{ asset, bytes }]);
-  const [llmResult] = await new HeuristicLlmJudgeProvider().analyze([{ asset, bytes }]);
+  const cvAnalysis = await new HeuristicCvProvider().analyze([{ asset, bytes }], {
+    listingContext: { listing_intent: "sale", property_type: "other" }
+  });
+  const llmAnalysis = await new HeuristicLlmJudgeProvider().analyze([{ asset, bytes }], {
+    listingContext: { listing_intent: "sale", property_type: "other" }
+  });
+  const cvResult = cvAnalysis.assessments[0]!;
+  const llmResult = llmAnalysis.assessments[0]!;
 
   assert.deepEqual(Object.keys(cvResult).sort(), Object.keys(llmResult).sort());
   assert.equal(cvResult.predictedViewType, "garden");
@@ -40,7 +46,10 @@ test("llm judge defaults to gpt-5.4", async () => {
     uploaded_at: new Date().toISOString()
   };
 
-  const [result] = await new HeuristicLlmJudgeProvider().analyze([{ asset, bytes }]);
+  const analysis = await new HeuristicLlmJudgeProvider().analyze([{ asset, bytes }], {
+    listingContext: { listing_intent: "sale", property_type: "other" }
+  });
+  const result = analysis.assessments[0]!;
   assert.equal(result.modelVersion, "gpt-5.4");
 });
 
@@ -67,8 +76,16 @@ test("technical quality rewards landscape-balanced images over portrait utility 
     storage_key: "test/portrait-front.jpg"
   };
 
-  const [landscapeResult] = await new HeuristicCvProvider().analyze([{ asset: landscapeAsset, bytes: landscape }]);
-  const [portraitResult] = await new HeuristicCvProvider().analyze([{ asset: portraitAsset, bytes: portrait }]);
+  const landscapeResult = (
+    await new HeuristicCvProvider().analyze([{ asset: landscapeAsset, bytes: landscape }], {
+      listingContext: { listing_intent: "sale", property_type: "other" }
+    })
+  ).assessments[0]!;
+  const portraitResult = (
+    await new HeuristicCvProvider().analyze([{ asset: portraitAsset, bytes: portrait }], {
+      listingContext: { listing_intent: "sale", property_type: "other" }
+    })
+  ).assessments[0]!;
 
   assert.ok(landscapeResult.technicalQualityScore > portraitResult.technicalQualityScore);
 });
@@ -94,8 +111,16 @@ test("scene confidence is lower when the provider falls back to visual heuristic
   };
 
   const provider = new HeuristicCvProvider();
-  const [explicitResult] = await provider.analyze([{ asset: explicitAsset, bytes }]);
-  const [fallbackResult] = await provider.analyze([{ asset: fallbackAsset, bytes }]);
+  const explicitResult = (
+    await provider.analyze([{ asset: explicitAsset, bytes }], {
+      listingContext: { listing_intent: "sale", property_type: "other" }
+    })
+  ).assessments[0]!;
+  const fallbackResult = (
+    await provider.analyze([{ asset: fallbackAsset, bytes }], {
+      listingContext: { listing_intent: "sale", property_type: "other" }
+    })
+  ).assessments[0]!;
 
   assert.ok(explicitResult.sceneConfidence > fallbackResult.sceneConfidence);
 });
